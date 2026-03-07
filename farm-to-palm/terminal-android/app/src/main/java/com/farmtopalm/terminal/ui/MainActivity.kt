@@ -6,11 +6,15 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.farmtopalm.terminal.data.crypto.Crypto
 import com.farmtopalm.terminal.data.db.AppDatabase
 import com.farmtopalm.terminal.di.AppModule
@@ -88,19 +92,28 @@ class MainActivity : ComponentActivity() {
                             onGoHome = { startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
                             provisioningManager = provisioningManager
                         )
-                        route.isEmpty() || route == "home" -> HomeScreen(
-                            todayAttendanceCount = attendanceCount.value,
-                            todayMealCount = mealCount.value,
-                            onAttendance = { route = "attendance" },
-                            onMeal = { route = "meal" },
-                            onEnrollment = { showPinDialog = true; route = "enrollment" },
-                            onStudents = { route = "students" },
-                            onSyncStatus = { route = "sync" },
-                            onDeviceStatus = { route = "device" },
-                            onSettings = { route = "settings" },
-                            onAttendanceList = { route = "attendance_list" },
-                            onMealList = { route = "meal_list" }
-                        )
+                        route.isEmpty() || route == "home" -> Scaffold(
+                            modifier = Modifier.fillMaxSize(),
+                            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                        ) { paddingValues ->
+                            HomeScreen(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(paddingValues)
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                todayAttendanceCount = attendanceCount.value,
+                                todayMealCount = mealCount.value,
+                                onAttendance = { route = "attendance" },
+                                onMeal = { route = "meal" },
+                                onEnrollment = { showPinDialog = true; route = "enrollment" },
+                                onStudents = { route = "students" },
+                                onSyncStatus = { route = "sync" },
+                                onDeviceStatus = { route = "device" },
+                                onSettings = { route = "settings" },
+                                onAttendanceList = { route = "attendance_list" },
+                                onMealList = { route = "meal_list" }
+                            )
+                        }
                         route == "attendance" -> config.value?.let { c ->
                             AttendanceScreen(
                                 palmManager = palmManager,
