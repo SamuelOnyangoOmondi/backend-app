@@ -131,7 +131,14 @@ class MainActivity : ComponentActivity() {
                                 palmManager = palmManager,
                                 terminalId = c.terminalId,
                                 schoolId = c.schoolId,
-                                onRecordAttendance = { id, conf -> scope.launch { eventRepo.recordAttendance(id, c.terminalId, c.schoolId, conf); attendanceCount.value = db.attendanceEventDao().getUnsynced().size }; route = "home" },
+                                onRecordAttendance = { id, conf ->
+                                    scope.launch {
+                                        eventRepo.recordAttendance(id, c.terminalId, c.schoolId, conf)
+                                        attendanceCount.value = db.attendanceEventDao().getUnsynced().size
+                                        SyncScheduler.runNow(ctx)
+                                        route = "home"
+                                    }
+                                },
                                 onBack = { route = "home" }
                             )
                         } ?: run { route = "home" }
@@ -143,7 +150,14 @@ class MainActivity : ComponentActivity() {
                                 mealRequiresPalm = mealRequiresPalm,
                                 terminalId = c.terminalId,
                                 schoolId = c.schoolId,
-                                onRecordMeal = { id, method -> scope.launch { eventRepo.recordMeal(id, c.terminalId, c.schoolId, method); mealCount.value = db.mealEventDao().getUnsynced().size }; route = "home" },
+                                onRecordMeal = { id, method ->
+                                    scope.launch {
+                                        eventRepo.recordMeal(id, c.terminalId, c.schoolId, method)
+                                        mealCount.value = db.mealEventDao().getUnsynced().size
+                                        SyncScheduler.runNow(ctx)
+                                        route = "home"
+                                    }
+                                },
                                 onBack = { route = "home" }
                             )
                         } ?: run { route = "home" }

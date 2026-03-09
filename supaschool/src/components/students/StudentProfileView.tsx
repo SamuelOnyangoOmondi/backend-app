@@ -53,10 +53,10 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
 }) => {
   const student = students.find((s) => s.id === studentId);
   const [attendanceRecords, setAttendanceRecords] = useState<
-    { id: string; attendance_date: string; status: string; notes: string | null; source?: string }[]
+    { id: string; attendance_date: string; status: string; notes: string | null; source?: string; recorded_at?: string; created_at?: string }[]
   >([]);
   const [mealRecords, setMealRecords] = useState<
-    { id: string; meal_date: string; meal_type: string; source?: string }[]
+    { id: string; meal_date: string; meal_type: string; source?: string; recorded_at?: string; created_at?: string }[]
   >([]);
   const [palmEnrollment, setPalmEnrollment] = useState<{
     enrolled_at: string;
@@ -67,18 +67,18 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
   useEffect(() => {
     if (!studentId) return;
     let isMounted = true;
-    (async () => {
+    const load = async () => {
       try {
         const [attRes, mealRes, palmRes] = await Promise.all([
           supabase
             .from("attendance_records")
-            .select("id, attendance_date, status, notes, source")
+            .select("id, attendance_date, status, notes, source, recorded_at, created_at")
             .eq("student_id", studentId)
             .order("attendance_date", { ascending: false })
             .limit(50),
           supabase
             .from("meal_records")
-            .select("id, meal_date, meal_type, source")
+            .select("id, meal_date, meal_type, source, recorded_at, created_at")
             .eq("student_id", studentId)
             .order("meal_date", { ascending: false })
             .limit(50),
@@ -99,9 +99,12 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
           setPalmLoading(false);
         }
       }
-    })();
+    };
+    load();
+    const interval = setInterval(load, 10000);
     return () => {
       isMounted = false;
+      clearInterval(interval);
     };
   }, [studentId]);
 
@@ -196,6 +199,7 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                             .map((r) => ({
                               date: r.attendance_date,
                               type: "Attendance",
+                              time: r.recorded_at ?? r.created_at,
                             })),
                           ...mealRecords
                             .filter((r) => r.source === "farm_to_feed")
@@ -203,13 +207,21 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                             .map((r) => ({
                               date: r.meal_date,
                               type: r.meal_type || "Meal",
+                              time: r.recorded_at ?? r.created_at,
                             })),
                         ]
-                          .sort((a, b) => b.date.localeCompare(a.date))
+                          .sort((a, b) => (b.time ?? b.date).localeCompare(a.time ?? a.date))
                           .slice(0, 5)
                           .map((s, i) => (
-                            <div key={i} className="flex justify-between">
-                              <span>{new Date(s.date).toLocaleDateString()}</span>
+                            <div key={i} className="flex justify-between items-center">
+                              <div>
+                                <span className="font-medium">{new Date(s.date).toLocaleDateString()}</span>
+                                {s.time && (
+                                  <span className="ml-2 text-sm text-muted-foreground">
+                                    {new Date(s.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-muted-foreground">{s.type}</span>
                             </div>
                           ))}
@@ -304,6 +316,7 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                       <TableHeader>
                         <TableRow>
                           <TableHead>Date</TableHead>
+                          <TableHead>Time</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Notes</TableHead>
                         </TableRow>
@@ -313,6 +326,11 @@ const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                           <TableRow key={record.id}>
                             <TableCell>
                               {new Date(record.attendance_date).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell>
+                              {(record.recorded_at ?? record.created_at)
+                                ? new Date(record.recorded_at ?? record.created_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                                : "—"}
                             </TableCell>
                             <TableCell>
                               {record.status === "present" && (

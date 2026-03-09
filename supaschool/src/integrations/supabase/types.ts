@@ -291,6 +291,7 @@ export type Database = {
           recorded_by: string | null
           source: Database["public"]["Enums"]["record_source"]
           device_id: string | null
+          recorded_at: string | null
           created_at: string
           updated_at: string
         }
@@ -342,6 +343,7 @@ export type Database = {
           recorded_by: string | null
           source: Database["public"]["Enums"]["record_source"]
           device_id: string | null
+          recorded_at: string | null
           created_at: string
           updated_at: string
         }
