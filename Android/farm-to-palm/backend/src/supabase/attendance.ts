@@ -1,5 +1,5 @@
 import { getSupabase } from './client.js';
-import { env } from '../../env.js';
+import { env } from '../env.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function asUuidOrNull(s: string | null | undefined): string | null {
