@@ -246,11 +246,12 @@ fun EnrollmentScreen(
                             error = null
                         )
                         val result = suspendCancellableCoroutine<Result<com.farmtopalm.terminal.biometric.dto.CaptureResult>> { cont ->
-                            palmManager.captureForEnroll(scope, hand, { hint ->
-                                guidedState = guidedState?.copy(liveHint = hint) ?: guidedState
-                            }) { capResult ->
-                                cont.resume(capResult)
-                            }
+                            palmManager.captureForEnroll(
+                                scope,
+                                hand,
+                                { capResult -> cont.resume(capResult) },
+                                { hint -> guidedState = guidedState?.copy(liveHint = hint) ?: guidedState }
+                            )
                         }
                         when (result) {
                             is Result.Success -> {
