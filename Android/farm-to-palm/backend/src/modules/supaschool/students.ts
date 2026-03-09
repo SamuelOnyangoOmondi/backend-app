@@ -26,8 +26,12 @@ export default async function (app: FastifyInstance) {
       .order('last_name', { ascending: true });
 
     if (error) {
-      req.log?.error({ err: error }, 'Supabase students query failed');
-      return reply.status(502).send({ error: 'Failed to fetch students', details: error.message });
+      req.log?.error({ err: error, schoolId }, 'Supabase students query failed');
+      return reply.status(502).send({
+        error: 'Failed to fetch students',
+        details: error.message,
+        hint: 'Check SUPABASE_SERVICE_ROLE_KEY (use service_role, not anon). Ensure terminal schoolId exists in Supabase schools.',
+      });
     }
 
     const students = (data ?? []).map((row: { id: string; first_name: string; last_name: string; admission_number: string }) => ({
