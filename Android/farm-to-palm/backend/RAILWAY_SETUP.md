@@ -88,7 +88,8 @@ In the **backend service** (not the Postgres one), open **Variables** and add:
 
 | Variable | Value | Required |
 |----------|--------|----------|
-| `DATABASE_URL` | Postgres connection string | Yes |
+| `SUPABASE_DATABASE_URL` | **Supabase** Postgres connection string (use this if you have Railway Postgres linked but want Supabase as sole DB) | Yes (when using Supabase) |
+| `DATABASE_URL` | Postgres connection string (or from linked Railway Postgres) | Yes (if not using SUPABASE_DATABASE_URL) |
 | `JWT_SECRET` | A long random string (e.g. `openssl rand -hex 32`) | Yes |
 | `PORT` | `3000` (or leave unset; Railway often sets it) | Optional |
 | `BACKEND_PUBLIC_URL` | Your Railway app URL (see step 7) | Yes (for device) |
@@ -96,7 +97,9 @@ In the **backend service** (not the Postgres one), open **Variables** and add:
 | `SUPABASE_SERVICE_ROLE_KEY` | Supa School Supabase service role key | If using Supa School |
 | `BIOMETRIC_ENC_KEY` | 32-byte hex (e.g. `openssl rand -hex 32`) | Optional |
 
-**How to get `DATABASE_URL`:**
+**Using Supabase as sole DB (ignore Railway Postgres):** If you have a linked Railway Postgres but want Supabase instead, add `SUPABASE_DATABASE_URL` with your Supabase connection string. The backend uses it in preference to `DATABASE_URL`. Get it from Supabase Dashboard → Project Settings → Database → Connection string (Transaction pooler, port 6543).
+
+**How to get `DATABASE_URL` (when using Railway Postgres):**
 
 - In the same Railway project, click the **Postgres** service.
 - Go to **Variables** or **Connect** and copy the **Postgres URL** / `DATABASE_URL`.
