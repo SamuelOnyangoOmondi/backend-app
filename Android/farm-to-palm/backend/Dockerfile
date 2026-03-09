@@ -13,5 +13,5 @@ RUN npm run build && npm prune --omit=dev
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Run migrations first; if they fail, still start (may already be applied)
-CMD ["sh", "-c", "npm run migrate || true; node dist/index.js"]
+# Start app only. Run migrations separately: railway run npm run migrate
+CMD ["node", "dist/index.js"]

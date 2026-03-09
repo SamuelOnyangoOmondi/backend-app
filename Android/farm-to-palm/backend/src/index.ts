@@ -17,7 +17,6 @@ import exceptions from './modules/reports/exceptions.js';
 import terminalsReport from './modules/reports/terminals.js';
 import eventsCsv from './modules/exports/events.js';
 import login from './modules/auth/login.js';
-import supaschoolStudents from './modules/supaschool/students.js';
 
 async function main() {
   const app = Fastify({ logger: true });
@@ -35,7 +34,12 @@ async function main() {
   await app.register(terminalsReport);
   await app.register(eventsCsv);
   await app.register(login);
-  await app.register(supaschoolStudents);
+  try {
+    const { default: supaschoolStudents } = await import('./modules/supaschool/students.js');
+    await app.register(supaschoolStudents);
+  } catch (e) {
+    console.warn('Supa School module skipped:', (e as Error)?.message ?? e);
+  }
   app.get('/health', async () => ({ ok: true }));
   app.get('/', async () => ({ ok: true, message: 'FarmToPalm API. Use /health or /v1/...' }));
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
