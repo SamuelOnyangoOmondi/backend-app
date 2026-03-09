@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { SummaryStats } from "@/components/dashboard/SummaryStats";
 import { TodayWidgets } from "@/components/dashboard/TodayWidgets";
@@ -19,6 +19,8 @@ export default function Index() {
   const { data: schools } = useSchools();
   const { data: snapshot } = useDashboardSnapshot({ date: today });
 
+  const firstSchool = schools && schools.length > 0 ? schools[0] : null;
+
   return (
     <DashboardLayout>
       <div className="p-4 md:p-6 space-y-6 animate-fade-in pb-40">
@@ -36,26 +38,32 @@ export default function Index() {
         </div>
 
         <div className="col-span-12">
-          <SummaryStats snapshot={snapshot ?? undefined} schoolCount={schools?.length} />
+          <SummaryStats snapshot={snapshot ?? undefined} schoolCount={schools?.length ?? null} />
         </div>
-        
+
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-12 lg:col-span-3 space-y-6">
-            <SchoolInfo
-              name="Kangemi Primary School"
-              county="Westlands County"
-              totalStudents={12567}
-              teacherCount={7}
-              classCount={12}
-              location="Nairobi, Westlands, Kangemi Ward"
-              phone={["+245 123 4567", "+245 123 4567"]}
-              email="hello@Kangemi.com"
-              website="Kangemiprimary.com"
-            />
+            {firstSchool ? (
+              <SchoolInfo
+                name={firstSchool.name}
+                county={firstSchool.county ?? ""}
+                totalStudents={firstSchool.total_enrollment ?? 0}
+                teacherCount={firstSchool.total_teachers ?? 0}
+                classCount={firstSchool.total_classrooms ?? 0}
+                location={firstSchool.location ?? ""}
+                phone={[firstSchool.phone ?? ""]}
+                email={firstSchool.email ?? ""}
+                website={firstSchool.website ?? undefined}
+              />
+            ) : (
+              <div className="p-5 border border-dashed border-gray-300 rounded-xl bg-white text-sm text-gray-500">
+                No school data yet. Add a school in Supabase to see details here.
+              </div>
+            )}
             <Facilities />
             <QuickActions />
           </div>
-          
+
           <div className="col-span-12 lg:col-span-6 space-y-6">
             <AIInsightsPanel />
             <Announcements />

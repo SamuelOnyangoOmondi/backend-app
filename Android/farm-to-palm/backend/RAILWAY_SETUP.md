@@ -18,7 +18,7 @@ Use these steps to host the backend on [Railway](https://railway.app) so the dev
 3. Choose **Deploy from GitHub repo** (recommended):
    - Connect your GitHub account if needed.
    - Select the repository that contains this backend (e.g. the repo that has `Android/farm-to-palm/backend`).
-   - If the backend is in a subfolder, you’ll set the **Root Directory** in the next step.
+   - If the backend is in a subfolder, you’ll set the **Root Directory** in step 4.
 4. Or choose **Empty Project** and we’ll add a service and connect the repo later.
 
 ---
@@ -32,14 +32,37 @@ Use these steps to host the backend on [Railway](https://railway.app) so the dev
 
 ---
 
-## 4. Add the backend service (if not already added)
+## 4. Set Root Directory so Railway builds the backend folder (required)
 
-1. In the same project, click **+ New** → **GitHub Repo** (or **Empty Service**).
-2. If you chose **GitHub Repo**:
-   - Select the same repo.
-   - Set **Root Directory** to the backend folder, e.g. `Android/farm-to-palm/backend` (or whatever path holds `package.json` and `src/`).
-   - Railway will detect Node.js and use `npm install` and `npm run build` / `npm start` if you configure them (see below).
-3. If you chose **Empty Project** earlier, add a new service and connect the repo the same way.
+Railway does **not** let you pick a folder when you first connect the repo—it uses the whole repo. So the first deploy fails. Fix it by setting **Root Directory** on the backend service:
+
+1. In your Railway project, click the **backend service** (the one connected to GitHub).
+2. Open the **Settings** tab for that service.
+3. Find the **Source** section (or **Build** / **General**).
+4. Look for **Root Directory** (or **Add Root Directory**). Enter exactly:
+   ```text
+   Android/farm-to-palm/backend
+   ```
+   Use this path if your repo root contains an `Android` folder; if your repo root is already the `Android` folder, use:
+   ```text
+   farm-to-palm/backend
+   ```
+5. Save. Railway will redeploy using only that folder (where `package.json` and `src/` live).
+
+**If you don’t see Root Directory:** Some plans or UI versions put it under **Settings → Source → Root Directory**. If it’s missing, use the alternative below.
+
+**Alternative – backend-only repo (if Root Directory is missing in your Railway UI):**
+
+1. Create a new GitHub repo (e.g. `farm-to-palm-backend`).
+2. Copy only the backend folder contents (not the folder itself) into that repo:
+   ```bash
+   cd /path/to/this/repo
+   mkdir -p /tmp/backend-deploy && cp -R Android/farm-to-palm/backend/* /tmp/backend-deploy/
+   cd /tmp/backend-deploy && git init && git add -A && git commit -m "Backend for Railway"
+   git remote add origin https://github.com/YOUR_USER/farm-to-palm-backend.git
+   git push -u origin main
+   ```
+3. In Railway, create a **New Project** → **Deploy from GitHub repo** and select this new repo. The repo root is the backend, so no Root Directory is needed.
 
 ---
 

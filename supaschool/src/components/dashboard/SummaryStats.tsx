@@ -133,12 +133,6 @@ interface SummaryStatsProps {
 }
 
 export function SummaryStats({ snapshot, schoolCount }: SummaryStatsProps = {}) {
-  const schoolsData = [
-    { name: "Primary", value: 22 },
-    { name: "Secondary", value: 15 },
-    { name: "Special", value: 5 }
-  ];
-
   const attendanceData = snapshot
     ? [
         { name: "Present", value: snapshot.attendance.present },
@@ -161,11 +155,11 @@ export function SummaryStats({ snapshot, schoolCount }: SummaryStatsProps = {}) 
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
       <StatCard 
         title="Total Schools" 
-        value={schoolCount ?? 42} 
+        value={schoolCount ?? "—"} 
         icon={<School className="h-6 w-6 text-white" />} 
         color="bg-primary"
-        data={schoolsData}
-        chartType="bar"
+        data={[]}
+        chartType="none"
       />
       <StatCard 
         title="Today's Attendance" 

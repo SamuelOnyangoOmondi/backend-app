@@ -28,6 +28,9 @@ import FlamiCurriculumPage from "./pages/flami/FlamiCurriculum";
 import FlamiModelsPage from "./pages/flami/FlamiModels";
 import FlamiSearchPage from "./pages/flami/FlamiSearch";
 import Settings from "./pages/Settings";
+import Login from "./pages/Login";
+import { AuthProvider } from "./auth/AuthContext";
+import { RequireAuth } from "./auth/RequireAuth";
 
 // Create empty placeholder pages for the routes in the sidebar
 const Support = () => <h1 className="text-2xl font-bold p-6">Support Page</h1>;
@@ -48,42 +51,228 @@ const App = () => {
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/schools" element={<Schools />} />
-            <Route path="/teachers" element={<Teachers />} />
-            <Route path="/students" element={<Students />} />
-            <Route path="/attendance" element={<Attendance />} />
-            <Route path="/classes" element={<Classes />} />
-            <Route path="/curriculum" element={<Curriculum />} />
-            <Route path="/exams" element={<Exams />} />
-            <Route path="/timetable" element={<Timetable />} />
-            <Route path="/facilities" element={<Facilities />} />
-            <Route path="/finance" element={<Finance />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/transport" element={<Transport />} />
-            <Route path="/meals" element={<Meals />} />
-            <Route path="/messages" element={<Messages />} />
-            
-            {/* Flami AI routes */}
-            <Route path="/flami" element={<FlamiAssistantPage />} />
-            <Route path="/flami/knowledge" element={<FlamiKnowledgePage />} />
-            <Route path="/flami/curriculum" element={<FlamiCurriculumPage />} />
-            <Route path="/flami/models" element={<FlamiModelsPage />} />
-            <Route path="/flami/search" element={<FlamiSearchPage />} />
-            
-            {/* App routes */}
-            <Route path="/hodari" element={<Hodari />} />
-            <Route path="/somanasi" element={<Somanasi />} />
-            <Route path="/zazi" element={<Zazi />} />
-            
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/support" element={<Support />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+
+              <Route
+                path="/"
+                element={
+                  <RequireAuth>
+                    <Index />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/schools"
+                element={
+                  <RequireAuth>
+                    <Schools />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/teachers"
+                element={
+                  <RequireAuth>
+                    <Teachers />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/students"
+                element={
+                  <RequireAuth>
+                    <Students />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/attendance"
+                element={
+                  <RequireAuth>
+                    <Attendance />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/classes"
+                element={
+                  <RequireAuth>
+                    <Classes />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/curriculum"
+                element={
+                  <RequireAuth>
+                    <Curriculum />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/exams"
+                element={
+                  <RequireAuth>
+                    <Exams />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/timetable"
+                element={
+                  <RequireAuth>
+                    <Timetable />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/facilities"
+                element={
+                  <RequireAuth>
+                    <Facilities />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/finance"
+                element={
+                  <RequireAuth>
+                    <Finance />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <RequireAuth>
+                    <Reports />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/analytics"
+                element={
+                  <RequireAuth>
+                    <Analytics />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/transport"
+                element={
+                  <RequireAuth>
+                    <Transport />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/meals"
+                element={
+                  <RequireAuth>
+                    <Meals />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/messages"
+                element={
+                  <RequireAuth>
+                    <Messages />
+                  </RequireAuth>
+                }
+              />
+
+              {/* Flami AI routes */}
+              <Route
+                path="/flami"
+                element={
+                  <RequireAuth>
+                    <FlamiAssistantPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/flami/knowledge"
+                element={
+                  <RequireAuth>
+                    <FlamiKnowledgePage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/flami/curriculum"
+                element={
+                  <RequireAuth>
+                    <FlamiCurriculumPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/flami/models"
+                element={
+                  <RequireAuth>
+                    <FlamiModelsPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/flami/search"
+                element={
+                  <RequireAuth>
+                    <FlamiSearchPage />
+                  </RequireAuth>
+                }
+              />
+
+              {/* App routes */}
+              <Route
+                path="/hodari"
+                element={
+                  <RequireAuth>
+                    <Hodari />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/somanasi"
+                element={
+                  <RequireAuth>
+                    <Somanasi />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/zazi"
+                element={
+                  <RequireAuth>
+                    <Zazi />
+                  </RequireAuth>
+                }
+              />
+
+              <Route
+                path="/settings"
+                element={
+                  <RequireAuth>
+                    <Settings />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/support"
+                element={
+                  <RequireAuth>
+                    <Support />
+                  </RequireAuth>
+                }
+              />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

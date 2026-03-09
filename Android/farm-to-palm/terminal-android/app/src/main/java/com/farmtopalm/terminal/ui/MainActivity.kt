@@ -73,7 +73,16 @@ class MainActivity : ComponentActivity() {
                     var nfcUid by remember { nfcUidState }
                     val scope = rememberCoroutineScope()
                     val config = remember { mutableStateOf<com.farmtopalm.terminal.data.db.entities.TerminalConfigEntity?>(null) }
-                    LaunchedEffect(Unit) { config.value = terminalRepo.getConfig() }
+                    LaunchedEffect(Unit) {
+                        var c = terminalRepo.getConfig()
+                        // Fix: if config has localhost but we have a build-time default, use it (no manual entry)
+                        if (c != null && BuildConfig.DEFAULT_BACKEND_URL.isNotBlank() &&
+                            (c.apiBaseUrl.contains("localhost") || c.apiBaseUrl.contains("10.0.2.2"))) {
+                            withContext(Dispatchers.IO) { terminalRepo.updateApiBaseUrl(BuildConfig.DEFAULT_BACKEND_URL.trim().trimEnd('/')) }
+                            c = c.copy(apiBaseUrl = BuildConfig.DEFAULT_BACKEND_URL.trim().trimEnd('/'))
+                        }
+                        config.value = c
+                    }
                     val todayStart = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0) }.timeInMillis
                     val attendanceCount = remember { mutableStateOf(0) }
                     val mealCount = remember { mutableStateOf(0) }
@@ -137,11 +146,22 @@ class MainActivity : ComponentActivity() {
                                 onBack = { route = "home" }
                             )
                         } ?: run { route = "home" }
-                        route == "enrollment" -> if (pinVerified) EnrollmentScreen(
-                            palmManager = palmManager,
-                            adminPinVerified = true,
-                            onRequestPin = { },
-                            onSaveTemplate = { extId, studentName, hand, rgb, ir, quality, streamType, rgbModelHash, irModelHash, sdkTemplateId, onSaved ->
+                        route == "enrollment" -> config.value?.let { c ->
+                            var enrollQuery by remember { mutableStateOf("") }
+                            val enrollStudents = remember(enrollQuery, c.schoolId) { mutableStateOf<List<com.farmtopalm.terminal.data.db.entities.StudentEntity>>(emptyList()) }
+                            var enrollSyncMessage by remember { mutableStateOf<String?>(null) }
+                            var enrollSyncLoading by remember { mutableStateOf(false) }
+                            LaunchedEffect(enrollQuery, c.schoolId) { enrollStudents.value = studentRepo.search(c.schoolId, enrollQuery).first() }
+                            if (pinVerified) EnrollmentScreen(
+                                palmManager = palmManager,
+                                adminPinVerified = true,
+                                schoolId = c.schoolId,
+                                schoolName = null,
+                                students = enrollStudents.value,
+                                searchQuery = enrollQuery,
+                                onSearchChange = { enrollQuery = it },
+                                onRequestPin = { },
+                                onSaveTemplate = { extId, studentName, hand, rgb, ir, quality, streamType, rgbModelHash, irModelHash, sdkTemplateId, onSaved ->
                                 scope.launch {
                                     try {
                                         studentRepo.upsert(extId, studentName.ifBlank { "Student $extId" }, config.value!!.schoolId)
@@ -164,11 +184,37 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             },
-                            onBack = { route = "home"; pinVerified = false }
+                            onBack = { route = "home"; pinVerified = false },
+                            onSyncStudents = {
+                                scope.launch {
+                                    enrollSyncLoading = true
+                                    enrollSyncMessage = null
+                                    try {
+                                        val tokenBytes = try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null }
+                                        if (tokenBytes == null) { enrollSyncMessage = "Token error"; return@launch }
+                                        val token = String(tokenBytes)
+                                        val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, token)
+                                        when (val result = client.getSupaschoolStudents()) {
+                                            is com.farmtopalm.terminal.util.Result.Success -> {
+                                                val list = result.value
+                                                list.forEach { s ->
+                                                    val name = listOf(s.firstName, s.lastName).filter { it.isNotBlank() }.joinToString(" ").ifBlank { s.admissionNumber }
+                                                    studentRepo.upsertFromSupaSchool(s.id, name.ifBlank { s.id }, c.schoolId)
+                                                }
+                                                withContext(Dispatchers.Main) { enrollSyncMessage = "Synced ${list.size} students from Supa School" }
+                                            }
+                                            is com.farmtopalm.terminal.util.Result.Error -> withContext(Dispatchers.Main) { enrollSyncMessage = result.message }
+                                        }
+                                    } finally { withContext(Dispatchers.Main) { enrollSyncLoading = false } }
+                                }
+                            },
+                            syncStudentsMessage = enrollSyncMessage,
+                            syncStudentsLoading = enrollSyncLoading
                         ) else {
                             if (showPinDialog) AdminPinDialog(onVerified = { pinVerified = true; showPinDialog = false }, onCancel = { showPinDialog = false; route = "home" }, prefs = prefs)
                             else route = "home"
                         }
+                        } ?: run { route = "home" }
                         route == "students" -> config.value?.let { c ->
                             var query by remember { mutableStateOf("") }
                             val students = remember(query, c.schoolId) { mutableStateOf<List<com.farmtopalm.terminal.data.db.entities.StudentEntity>>(emptyList()) }

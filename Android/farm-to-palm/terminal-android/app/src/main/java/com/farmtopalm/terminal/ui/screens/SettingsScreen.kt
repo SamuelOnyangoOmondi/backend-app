@@ -27,7 +27,7 @@ fun SettingsScreen(
         OutlinedTextField(
             value = apiBaseUrl,
             onValueChange = onApiBaseUrlChange,
-            placeholder = { Text("https://your-backend.up.railway.app") },
+            placeholder = { Text("https://your-backend.example.com") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )

@@ -1,6 +1,7 @@
 package com.farmtopalm.terminal.provisioning
 
 import android.content.Context
+import com.farmtopalm.terminal.BuildConfig
 import com.farmtopalm.terminal.data.crypto.Crypto
 import com.farmtopalm.terminal.data.db.AppDatabase
 import com.farmtopalm.terminal.data.repo.TerminalRepo
@@ -54,7 +55,12 @@ class ProvisioningManager(private val context: Context) {
             val json = JSONObject(response.body?.string() ?: "{}")
             val terminalId = json.optString("terminalId")
             val schoolId = json.optString("schoolId")
-            val apiBaseUrl = json.optString("apiBaseUrl", baseUrl)
+            var apiBaseUrl = json.optString("apiBaseUrl", baseUrl).trim().trimEnd('/')
+            // If backend returned localhost (e.g. BACKEND_PUBLIC_URL not set on server), use build-time default
+            if ((apiBaseUrl.contains("localhost") || apiBaseUrl.contains("10.0.2.2")) &&
+                BuildConfig.DEFAULT_BACKEND_URL.isNotBlank()) {
+                apiBaseUrl = BuildConfig.DEFAULT_BACKEND_URL.trim().trimEnd('/')
+            }
             val token = json.optString("token")
             if (terminalId.isBlank() || token.isBlank()) {
                 return@withContext Result.Error("Invalid activation response")

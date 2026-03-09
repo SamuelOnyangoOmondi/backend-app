@@ -1,3 +1,6 @@
+# Temp deploy clone
+_backend_push/
+
 # Dependencies and build outputs
 node_modules/
 **/node_modules/

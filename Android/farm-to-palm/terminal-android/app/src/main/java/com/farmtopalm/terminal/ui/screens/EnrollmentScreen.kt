@@ -1,13 +1,18 @@
 package com.farmtopalm.terminal.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.farmtopalm.terminal.biometric.PalmBiometricManager
 import com.farmtopalm.terminal.biometric.PalmSdkBridge
+import com.farmtopalm.terminal.data.db.entities.StudentEntity
 import com.farmtopalm.terminal.util.Result
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -15,12 +20,19 @@ import com.farmtopalm.terminal.util.Result
 fun EnrollmentScreen(
     palmManager: PalmBiometricManager,
     adminPinVerified: Boolean,
+    schoolId: String,
+    schoolName: String?,
+    students: List<StudentEntity>,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
     onRequestPin: (onVerified: () -> Unit) -> Unit,
     onSaveTemplate: (externalId: String, name: String, hand: String, rgb: ByteArray, ir: ByteArray, quality: Int, streamType: String?, rgbModelHash: String?, irModelHash: String?, sdkTemplateId: String?, onSaved: () -> Unit) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onSyncStudents: () -> Unit = {},
+    syncStudentsMessage: String? = null,
+    syncStudentsLoading: Boolean = false
 ) {
-    var externalId by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
+    var selectedStudent by remember { mutableStateOf<StudentEntity?>(null) }
     var hand by remember { mutableStateOf("left") }
     var status by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -32,9 +44,8 @@ fun EnrollmentScreen(
         return
     }
 
-    // Open once when screen is entered; reuse same device when re-entering (do not release on leave).
     LaunchedEffect(Unit) {
-        status = "Opening scanner…"
+        status = "Opening scanner..."
         palmManager.open(scope) { openResult ->
             openReady = true
             when (openResult) {
@@ -44,8 +55,15 @@ fun EnrollmentScreen(
         }
     }
 
-    // Supa School–style: card, 8dp radius, primary/secondary colors
     val cardShape = RoundedCornerShape(8.dp)
+    val textFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        focusedLabelColor = MaterialTheme.colorScheme.primary,
+        cursorColor = MaterialTheme.colorScheme.primary,
+        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+        focusedTrailingIconColor = MaterialTheme.colorScheme.primary
+    )
+
     Column(
         Modifier
             .fillMaxSize()
@@ -65,34 +83,101 @@ fun EnrollmentScreen(
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "School: ${schoolName ?: schoolId}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(16.dp))
+
                 OutlinedTextField(
-                    value = externalId,
-                    onValueChange = { externalId = it },
-                    label = { Text("External ID") },
+                    value = searchQuery,
+                    onValueChange = onSearchChange,
+                    label = { Text("Search students") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        cursorColor = MaterialTheme.colorScheme.primary,
-                        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
-                        focusedTrailingIconColor = MaterialTheme.colorScheme.primary
-                    )
+                    colors = textFieldColors
                 )
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        cursorColor = MaterialTheme.colorScheme.primary
+                Spacer(Modifier.height(8.dp))
+
+                if (students.isEmpty()) {
+                    Text(
+                        "No students. Sync from Supa School first.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = onSyncStudents,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = !syncStudentsLoading,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    ) { Text(if (syncStudentsLoading) "Syncing…" else "Sync students from Supa School") }
+                    if (syncStudentsMessage != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            syncStudentsMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                } else {
+                    Text(
+                        "Select a student to enroll palm:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 180.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(students) { s ->
+                            val isSelected = selectedStudent?.id == s.id
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedStudent = s },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surface
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Row(
+                                    Modifier.padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        s.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        s.externalId,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HandDropdown(
+                    value = hand,
+                    onChange = { hand = it },
+                    modifier = Modifier.fillMaxWidth()
                 )
-                HandDropdown(value = hand, onChange = { hand = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 Text(
                     status,
                     color = if (status.startsWith("Error:") || status.startsWith("Capture failed")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
@@ -103,7 +188,7 @@ fun EnrollmentScreen(
                     FilledTonalButton(
                         onClick = {
                             openReady = false
-                            status = "Opening scanner…"
+                            status = "Opening scanner..."
                             palmManager.release()
                             palmManager.open(scope) { openResult ->
                                 openReady = true
@@ -115,7 +200,10 @@ fun EnrollmentScreen(
                         },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 56.dp),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     ) { Text("Retry scanner") }
                 }
             }
@@ -123,9 +211,10 @@ fun EnrollmentScreen(
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
-                if (externalId.isBlank() || name.isBlank() || !openReady || loading) return@Button
+                val student = selectedStudent
+                if (student == null || !openReady || loading) return@Button
                 loading = true
-                status = "Capturing…"
+                status = "Capturing..."
                 palmManager.captureForEnroll(scope, hand) { capResult ->
                     when (capResult) {
                         is Result.Success -> {
@@ -133,29 +222,43 @@ fun EnrollmentScreen(
                             val ir = capResult.value.irFeature ?: ByteArray(0)
                             val v = capResult.value
                             onSaveTemplate(
-                                externalId.trim(), name.trim(), hand, rgb, ir, v.quality,
-                                v.streamType, v.rgbModelHash, v.irModelHash, v.matchTemplateId
+                                student.externalId,
+                                student.name,
+                                hand,
+                                rgb,
+                                ir,
+                                v.quality,
+                                v.streamType,
+                                v.rgbModelHash,
+                                v.irModelHash,
+                                v.matchTemplateId
                             ) {
                                 status = if (PalmSdkBridge.isUsingRealSdk) "Saved (vendor template)" else "Saved"
                                 loading = false
+                                selectedStudent = null
                             }
                         }
                         is Result.Error -> {
                             val msg = (capResult as Result.Error).message
                             status = "Capture failed: $msg"
                             if (msg.contains("TIMEOUT", ignoreCase = true) || msg.contains("no palm", ignoreCase = true)) {
-                                status += "\nTip: Hold palm 2–4 cm above sensor, avoid shadows."
+                                status += "\nTip: Hold palm 2-4 cm above sensor, avoid shadows."
                             }
                             loading = false
                         }
                     }
                 }
             },
-            enabled = !loading && openReady && !status.startsWith("Error:"),
+            enabled = selectedStudent != null && !loading && openReady && !status.startsWith("Error:"),
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
             shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
-        ) { Text("Capture & Save") }
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
+        ) {
+            Text(if (selectedStudent != null) "Capture & Save palm for ${selectedStudent!!.name}" else "Select a student first")
+        }
         Spacer(Modifier.height(8.dp))
         TextButton(
             onClick = onBack,

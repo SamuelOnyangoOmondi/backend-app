@@ -7,3 +7,5 @@ This repository contains:
 
 Open the **Android** folder in Android Studio to work on the mobile/terminal app.  
 Open **supaschool** for the web project.
+
+**Railway (backend):** If you deploy this repo to Railway, set the service **Root Directory** to `Android/farm-to-palm/backend` (Settings → Source). See `Android/farm-to-palm/backend/RAILWAY_SETUP.md`.

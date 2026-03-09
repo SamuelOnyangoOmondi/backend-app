@@ -1,43 +1,55 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { School } from "@/types/database";
 import { toast } from "sonner";
 import { EditSchoolProfileModal } from "@/components/dashboard/EditSchoolProfileModal";
 import { SchoolTabs } from "@/components/schools/SchoolTabs";
-
-// Sample school data (would come from API in production)
-const sampleSchool: Partial<School> = {
-  id: "1",
-  name: "Kisumu Primary School",
-  county: "Kisumu County",
-  level_of_education: "Primary",
-  school_status: "Public",
-  address: "P.O Box 123, Kisumu",
-  email: "info@kisumuprimary.ac.ke",
-  phone: "+254 700 123456",
-  location: "Milimani Estate, Kisumu City",
-  total_enrollment: 850,
-  total_boys: 420,
-  total_girls: 430,
-  total_classrooms: 25,
-  pupil_teacher_ratio: 30,
-  pupil_classroom_ratio: 34,
-  logo_url: "/lovable-uploads/a1e16204-bee3-4c31-b4c6-b4499f745422.png",
-  primary_color: "#8B5CF6", // More vibrant purple
-  secondary_color: "#D946EF", // Vibrant magenta
-  accent_color: "#F97316" // Bright orange
-}
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Schools() {
   const [activeTab, setActiveTab] = useState("overview");
   const [editMode, setEditMode] = useState(false);
-  const [school, setSchool] = useState<Partial<School>>(sampleSchool);
+  const [school, setSchool] = useState<Partial<School> | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const handleSaveProfile = (values: any) => {
-    // In a real app, this would send data to the backend
-    setSchool({ ...school, ...values });
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("schools")
+          .select("*")
+          .order("created_at", { ascending: true })
+          .limit(1);
+        if (!isMounted) return;
+        if (error) {
+          console.error(error);
+        } else if (data && data.length > 0) {
+          setSchool(data[0] as School);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleSaveProfile = async (values: any) => {
+    if (!school) return;
+    const updates = { ...values, updated_at: new Date().toISOString() };
+    const { error } = await supabase
+      .from("schools")
+      .update(updates)
+      .eq("id", school.id);
+    if (error) {
+      toast.error("Failed to update school profile");
+      return;
+    }
+    setSchool({ ...school, ...updates });
     toast.success("School profile updated successfully");
     setEditMode(false);
   };
@@ -63,24 +75,34 @@ export default function Schools() {
           </button>
         </div>
         
-        <SchoolTabs 
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          school={school}
-          editMode={editMode}
-          setEditMode={setEditMode}
-          handleSaveProfile={handleSaveProfile}
-          onOpenProfileModal={() => setIsProfileModalOpen(true)}
-        />
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Loading school data…</div>
+        ) : !school ? (
+          <div className="p-5 border border-dashed border-gray-300 rounded-xl bg-white text-sm text-gray-500">
+            No school data found. Add a row in the <code>schools</code> table in Supabase to manage it here.
+          </div>
+        ) : (
+          <SchoolTabs 
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            school={school}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            handleSaveProfile={handleSaveProfile}
+            onOpenProfileModal={() => setIsProfileModalOpen(true)}
+          />
+        )}
       </div>
       
       {/* Edit Profile Modal */}
-      <EditSchoolProfileModal 
-        school={school}
+      {school && (
+        <EditSchoolProfileModal 
+      school={school}
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
         onSave={handleSaveProfile}
       />
+      )}
     </DashboardLayout>
   );
 }

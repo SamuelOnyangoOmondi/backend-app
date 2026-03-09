@@ -1,0 +1,12 @@
+# Railway config when this folder is set as Root Directory.
+# In Railway: backend service → Settings → Source → Root Directory = Android/farm-to-palm/backend
+
+[build]
+builder = "nixpacks"
+buildCommand = "npm run build"
+watchPatterns = ["src/**", "package.json", "tsconfig.json", "knexfile.cjs"]
+
+[deploy]
+startCommand = "npm run migrate && npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

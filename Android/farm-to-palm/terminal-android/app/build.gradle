@@ -4,7 +4,7 @@ plugins {
     id 'kotlin-kapt'
 }
 
-// Read default backend URL from backend/.env (BACKEND_PUBLIC_URL or API_BASE_URL) so the device uses it without manual entry.
+// Read default backend URL from backend/.env (BACKEND_PUBLIC_URL or API_BASE_URL). Single source of truth — no manual entry on device.
 def readDefaultBackendUrl() {
     def envFile = file("${rootProject.projectDir}/../backend/.env")
     if (envFile.exists()) {
@@ -23,6 +23,8 @@ def readDefaultBackendUrl() {
             }
         }
     }
+    def fromGradle = project.findProperty("BACKEND_PUBLIC_URL")?.toString()?.trim()
+    if (fromGradle && !fromGradle.isEmpty()) return fromGradle
     return ""
 }
 
