@@ -1,5 +1,6 @@
-# Temp deploy clone
+# Temp deploy clone (do not commit)
 _backend_push/
+.backend-deploy/
 
 # Dependencies and build outputs
 node_modules/
