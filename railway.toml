@@ -1,0 +1,2 @@
+# Railway: use Dockerfile (do not override with Nixpacks).
+# Root Directory should be empty for backend-only repo.

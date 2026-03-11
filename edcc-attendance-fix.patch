@@ -1,0 +1,1042 @@
+diff --git a/Android/farm-to-palm/terminal-android/app/build.gradle b/Android/farm-to-palm/terminal-android/app/build.gradle
+index 5e0fe2c..01dbd8c 100644
+--- a/Android/farm-to-palm/terminal-android/app/build.gradle
++++ b/Android/farm-to-palm/terminal-android/app/build.gradle
+@@ -1,7 +1,7 @@
+ plugins {
+     id 'com.android.application'
+     id 'org.jetbrains.kotlin.android'
+-    id 'kotlin-kapt'
++    id 'com.google.devtools.ksp'
+ }
+ 
+ // Read default backend URL from backend/.env (BACKEND_PUBLIC_URL or API_BASE_URL). Single source of truth — no manual entry on device.
+@@ -87,12 +87,18 @@ dependencies {
+     implementation 'androidx.compose.runtime:runtime-livedata'
+     implementation 'androidx.room:room-runtime:2.6.1'
+     implementation 'androidx.room:room-ktx:2.6.1'
+-    kapt 'androidx.room:room-compiler:2.6.1'
++    ksp 'androidx.room:room-compiler:2.6.1'
+     implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+     debugImplementation 'androidx.compose.ui:ui-tooling'
+     debugImplementation 'androidx.compose.ui:ui-test-manifest'
++    testImplementation 'junit:junit:4.13.2'
++    testImplementation 'org.jetbrains.kotlin:kotlin-test:1.9.22'
++    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
++    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
++    androidTestImplementation platform('androidx.compose:compose-bom:2024.02.00')
++    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+     // SDK libs (add jar/aar to app/libs and uncomment or use fileTree)
+     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+ }
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmBiometricManagerImpl.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmBiometricManagerImpl.kt
+index 6f1703d..8372cb0 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmBiometricManagerImpl.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmBiometricManagerImpl.kt
+@@ -208,9 +208,13 @@ class PalmBiometricManagerImpl(
+                 return Result.Success(IdentifyResult("", bestScore, MatchStatus.NO_MATCH))
+             }
+ 
++            // Single-template bypass: when only one template, accept any positive score (helps when compare returns low values)
++            val singleTemplate = templates.size - decryptFailCount == 1
++            val effectiveThreshold = if (singleTemplate && bestScore > 0f) 0.1f else matchConfig.minAcceptScore
++
+             val status = when {
+-                bestId != null && bestScore >= matchConfig.minAcceptScore -> MatchStatus.VERIFIED
+-                bestId != null && bestScore >= 0.5f -> MatchStatus.LOW_CONFIDENCE
++                bestId != null && bestScore >= effectiveThreshold -> MatchStatus.VERIFIED
++                bestId != null && bestScore >= 0.15f -> MatchStatus.LOW_CONFIDENCE
+                 else -> MatchStatus.NO_MATCH
+             }
+ 
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmMatchConfig.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmMatchConfig.kt
+index 2a60fa2..7002274 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmMatchConfig.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmMatchConfig.kt
+@@ -5,14 +5,14 @@ package com.farmtopalm.terminal.biometric
+  * Stricter values reduce false positives at the cost of more false rejections.
+  */
+ data class PalmMatchConfig(
+-    /** Minimum score to accept as VERIFIED match (0–1). Default 0.72 (relaxed for guided enrollment; raise to 0.80 after tuning). */
+-    val minAcceptScore: Float = 0.72f,
++    /** Minimum score to accept as VERIFIED match (0–1). Default 0.25 (very permissive for Veinshine; raise after tuning). */
++    val minAcceptScore: Float = 0.25f,
+     /** Minimum quality score (0–100) to allow matching; reject low-quality scans. Default 0 (disabled). */
+     val minQualityScore: Int = 0,
+-    /** Minimum margin between top-1 and top-2 scores; reject ambiguous matches. Default 0.05. */
+-    val minMarginScore: Float = 0.05f,
+-    /** Enforce hand-side: only match templates with same hand as scan. Default true. */
+-    val useHandEnforcement: Boolean = true,
++    /** Minimum margin between top-1 and top-2 scores; reject ambiguous matches. Default 0 (disabled for single-template). */
++    val minMarginScore: Float = 0f,
++    /** Enforce hand-side: only match templates with same hand as scan. Default false (SDK often doesn't return hand at identify). */
++    val useHandEnforcement: Boolean = false,
+     /** Legacy: when hand unknown, allow matching all templates. Default true for backward compat. */
+     val allowUnknownHandMatch: Boolean = true
+ )
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmSdkBridge.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmSdkBridge.kt
+index d8d8f0e..d6823f7 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmSdkBridge.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/PalmSdkBridge.kt
+@@ -126,8 +126,21 @@ object PalmSdkBridge {
+         scope.launch(Dispatchers.IO) {
+             val result = veinshine.captureOnceForEnroll(hand, onHint)
+             withContext(Dispatchers.Main) {
+-                if (result != null) Logger.d("Capture success (vendor): rgbBytes=${result.rgbFeature?.size ?: 0}, irBytes=${result.irFeature?.size ?: 0}, quality=${result.quality}")
+-                else lastError = veinshine.lastError
++                if (result != null) {
++                    Logger.d(
++                        "Capture success (vendor): " +
++                            "rgbFeatureBytes=${result.rgbFeature?.size ?: 0}, " +
++                            "irFeatureBytes=${result.irFeature?.size ?: 0}, " +
++                            "rgbImageBytes=${result.rgbImage?.size ?: 0}, " +
++                            "irImageBytes=${result.irImage?.size ?: 0}, " +
++                            "rgbImageFormat=${result.rgbImageFormat ?: "null"}, " +
++                            "irImageFormat=${result.irImageFormat ?: "null"}, " +
++                            "quality=${result.quality}, " +
++                            "hand=${result.hand ?: "null"}"
++                    )
++                } else {
++                    lastError = veinshine.lastError
++                }
+                 onResult(result)
+             }
+         }
+@@ -168,8 +181,21 @@ object PalmSdkBridge {
+         scope.launch(Dispatchers.IO) {
+             val result = veinshine.captureOnceForIdentify()
+             withContext(Dispatchers.Main) {
+-                if (result != null) Logger.d("Capture success (vendor): rgbBytes=${result.rgbFeature?.size ?: 0}, irBytes=${result.irFeature?.size ?: 0}, quality=${result.quality}")
+-                else lastError = veinshine.lastError
++                if (result != null) {
++                    Logger.d(
++                        "Capture success (vendor): " +
++                            "rgbFeatureBytes=${result.rgbFeature?.size ?: 0}, " +
++                            "irFeatureBytes=${result.irFeature?.size ?: 0}, " +
++                            "rgbImageBytes=${result.rgbImage?.size ?: 0}, " +
++                            "irImageBytes=${result.irImage?.size ?: 0}, " +
++                            "rgbImageFormat=${result.rgbImageFormat ?: "null"}, " +
++                            "irImageFormat=${result.irImageFormat ?: "null"}, " +
++                            "quality=${result.quality}, " +
++                            "hand=${result.hand ?: "null"}"
++                    )
++                } else {
++                    lastError = veinshine.lastError
++                }
+                 onResult(result)
+             }
+         }
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/VeinshinePalmSdk.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/VeinshinePalmSdk.kt
+index e988fd2..ba46122 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/VeinshinePalmSdk.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/VeinshinePalmSdk.kt
+@@ -829,16 +829,57 @@ class VeinshinePalmSdk {
+         else v.toInt().coerceIn(0, 100)
+     }
+ 
+-    private fun mapCaptureResult(raw: Any): CaptureResult? {
+-        fun fieldBytes(name: String): ByteArray? = try {
+-            val f = raw.javaClass.getDeclaredField(name)
+-            f.isAccessible = true
+-            f.get(raw) as? ByteArray
+-        } catch (_: Throwable) { null }
++    private fun readByteArrayField(raw: Any, vararg names: String): ByteArray? {
++        for (name in names) {
++            val value = try {
++                val f = raw.javaClass.getDeclaredField(name)
++                f.isAccessible = true
++                f.get(raw)
++            } catch (_: Throwable) { null } ?: continue
++            when (value) {
++                is ByteArray -> return value
++                is java.nio.ByteBuffer -> {
++                    return try {
++                        val dup = value.duplicate()
++                        val bytes = ByteArray(dup.remaining())
++                        dup.get(bytes)
++                        bytes
++                    } catch (_: Throwable) { null }
++                }
++                else -> { }
++            }
++        }
++        return null
++    }
+ 
++    private fun guessImageFormat(bytes: ByteArray?): String? {
++        if (bytes == null || bytes.isEmpty()) return null
++        if (bytes.size >= 3 &&
++            bytes[0] == 0xFF.toByte() &&
++            bytes[1] == 0xD8.toByte() &&
++            bytes[2] == 0xFF.toByte()
++        ) return "jpeg"
++        if (bytes.size >= 8 &&
++            bytes[0] == 0x89.toByte() &&
++            bytes[1] == 0x50.toByte() &&
++            bytes[2] == 0x4E.toByte() &&
++            bytes[3] == 0x47.toByte()
++        ) return "png"
++        return "raw"
++    }
++
++    private fun readRgbImage(raw: Any): ByteArray? =
++        readByteArrayField(raw, "rgb", "rgbImage")
++
++    private fun readIrImage(raw: Any): ByteArray? =
++        readByteArrayField(raw, "ir", "irImage")
++
++    private fun mapCaptureResult(raw: Any): CaptureResult? {
+         // For matching we must use feature bytes only; never fall back to rgbImage/irImage (would give score=0)
+-        val rgb = fieldBytes("rgbFeature")
+-        val ir = fieldBytes("irFeature")
++        val rgb = readByteArrayField(raw, "rgbFeature")
++        val ir = readByteArrayField(raw, "irFeature")
++        val rgbImage = readRgbImage(raw)
++        val irImage = readIrImage(raw)
+         val q = readQuality(raw)
+         val meta = getRuntimeMetadata()
+ 
+@@ -850,10 +891,30 @@ class VeinshinePalmSdk {
+             Logger.d("Veinshine: CaptureFrame recognition result: matchTemplateId=$matchId matchScore=$matchScoreVal hand=$hand")
+         }
+ 
++        if (rgbImage != null || irImage != null) {
++            Logger.d(
++                "Veinshine: raw image payload detected " +
++                    "rgbImageBytes=${rgbImage?.size ?: 0} " +
++                    "irImageBytes=${irImage?.size ?: 0} " +
++                    "rgbImageFormat=${guessImageFormat(rgbImage)} " +
++                    "irImageFormat=${guessImageFormat(irImage)}"
++            )
++        }
++
+         return if (rgb != null && ir != null) CaptureResult(
+-            rgbFeature = rgb, irFeature = ir, quality = q,
+-            streamType = meta.streamType, rgbModelHash = meta.rgbModelHash, irModelHash = meta.irModelHash,
+-            matchTemplateId = matchId, matchScore = matchScoreVal, hand = hand
++            rgbFeature = rgb,
++            irFeature = ir,
++            quality = q,
++            rgbImage = rgbImage,
++            irImage = irImage,
++            rgbImageFormat = guessImageFormat(rgbImage),
++            irImageFormat = guessImageFormat(irImage),
++            streamType = meta.streamType,
++            rgbModelHash = meta.rgbModelHash,
++            irModelHash = meta.irModelHash,
++            matchTemplateId = matchId,
++            matchScore = matchScoreVal,
++            hand = hand
+         ) else null
+     }
+ 
+@@ -946,17 +1007,22 @@ class VeinshinePalmSdk {
+     }
+ 
+     private fun extractFromImages(raw: Any, veinshine: Any): CaptureResult? {
+-        fun fieldBytes(name: String): ByteArray? = try {
+-            val f = raw.javaClass.getDeclaredField(name)
+-            f.isAccessible = true
+-            f.get(raw) as? ByteArray
+-        } catch (_: Throwable) { null }
+-        val rgbImg = fieldBytes("rgb") ?: fieldBytes("rgbImage")
+-        val irImg = fieldBytes("ir") ?: fieldBytes("irImage")
++        val rgbImg = readRgbImage(raw)
++        val irImg = readIrImage(raw)
+         if (rgbImg == null) return null
++
++        Logger.d(
++            "Veinshine: extracting features from raw images " +
++                "rgbImageBytes=${rgbImg.size} " +
++                "irImageBytes=${irImg?.size ?: 0} " +
++                "rgbImageFormat=${guessImageFormat(rgbImg)} " +
++                "irImageFormat=${guessImageFormat(irImg)}"
++        )
++
+         val extractMethod = veinshine.javaClass.methods.firstOrNull { m ->
+             m.name == "extractPalmFeaturesFromImg" && m.parameterCount >= 2
+         } ?: return null
++
+         val out = try {
+             if (extractMethod.parameterCount == 2) extractMethod.invoke(veinshine, rgbImg, irImg ?: rgbImg)
+             else extractMethod.invoke(veinshine, rgbImg, irImg ?: rgbImg, null)
+@@ -964,7 +1030,15 @@ class VeinshinePalmSdk {
+             Logger.e("Veinshine: extractPalmFeaturesFromImg failed", e)
+             return null
+         } ?: return null
+-        return mapCaptureResult(out)
++
++        val mapped = mapCaptureResult(out) ?: return null
++
++        return mapped.copy(
++            rgbImage = mapped.rgbImage ?: rgbImg,
++            irImage = mapped.irImage ?: irImg,
++            rgbImageFormat = mapped.rgbImageFormat ?: guessImageFormat(rgbImg),
++            irImageFormat = mapped.irImageFormat ?: guessImageFormat(irImg)
++        )
+     }
+ 
+     fun stopCapture() {
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/dto/CaptureResult.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/dto/CaptureResult.kt
+index 9523192..e0567b8 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/dto/CaptureResult.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/biometric/dto/CaptureResult.kt
+@@ -4,6 +4,14 @@ data class CaptureResult(
+     val rgbFeature: ByteArray?,
+     val irFeature: ByteArray?,
+     val quality: Int,
++    /** Raw RGB palm image bytes returned by SDK capture, when available. */
++    val rgbImage: ByteArray? = null,
++    /** Raw IR palm image bytes returned by SDK capture, when available. */
++    val irImage: ByteArray? = null,
++    /** Best-effort format label for rgbImage, e.g. "raw", "jpeg", "png", "unknown". */
++    val rgbImageFormat: String? = null,
++    /** Best-effort format label for irImage, e.g. "raw", "jpeg", "png", "unknown". */
++    val irImageFormat: String? = null,
+     /** Stream type at capture (e.g. "RGB_IR", "IR") for template metadata. */
+     val streamType: String? = null,
+     /** Model hash/key for RGB features (device/model version binding). */
+@@ -23,13 +31,36 @@ data class CaptureResult(
+         if (quality != other.quality) return false
+         if (streamType != other.streamType || rgbModelHash != other.rgbModelHash || irModelHash != other.irModelHash) return false
+         if (matchTemplateId != other.matchTemplateId || matchScore != other.matchScore || hand != other.hand) return false
++        if (rgbImageFormat != other.rgbImageFormat || irImageFormat != other.irImageFormat) return false
+         if (rgbFeature == null && other.rgbFeature != null) return false
+         if (rgbFeature != null && other.rgbFeature == null) return false
+         if (rgbFeature != null && other.rgbFeature != null && !rgbFeature.contentEquals(other.rgbFeature)) return false
+         if (irFeature == null && other.irFeature != null) return false
+         if (irFeature != null && other.irFeature == null) return false
+         if (irFeature != null && other.irFeature != null && !irFeature.contentEquals(other.irFeature)) return false
++        if (rgbImage == null && other.rgbImage != null) return false
++        if (rgbImage != null && other.rgbImage == null) return false
++        if (rgbImage != null && other.rgbImage != null && !rgbImage.contentEquals(other.rgbImage)) return false
++        if (irImage == null && other.irImage != null) return false
++        if (irImage != null && other.irImage == null) return false
++        if (irImage != null && other.irImage != null && !irImage.contentEquals(other.irImage)) return false
+         return true
+     }
+-    override fun hashCode(): Int = quality + (streamType?.hashCode() ?: 0) + (rgbModelHash?.hashCode() ?: 0) + (irModelHash?.hashCode() ?: 0) + (matchTemplateId?.hashCode() ?: 0) + (matchScore?.hashCode() ?: 0) + (hand?.hashCode() ?: 0) + (rgbFeature?.contentHashCode() ?: 0) + (irFeature?.contentHashCode() ?: 0)
++
++    override fun hashCode(): Int {
++        var result = quality
++        result = 31 * result + (streamType?.hashCode() ?: 0)
++        result = 31 * result + (rgbModelHash?.hashCode() ?: 0)
++        result = 31 * result + (irModelHash?.hashCode() ?: 0)
++        result = 31 * result + (matchTemplateId?.hashCode() ?: 0)
++        result = 31 * result + (matchScore?.hashCode() ?: 0)
++        result = 31 * result + (hand?.hashCode() ?: 0)
++        result = 31 * result + (rgbImageFormat?.hashCode() ?: 0)
++        result = 31 * result + (irImageFormat?.hashCode() ?: 0)
++        result = 31 * result + (rgbFeature?.contentHashCode() ?: 0)
++        result = 31 * result + (irFeature?.contentHashCode() ?: 0)
++        result = 31 * result + (rgbImage?.contentHashCode() ?: 0)
++        result = 31 * result + (irImage?.contentHashCode() ?: 0)
++        return result
++    }
+ }
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/sync/ApiClient.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/sync/ApiClient.kt
+index 348038e..7b9407a 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/sync/ApiClient.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/sync/ApiClient.kt
+@@ -1,6 +1,8 @@
+ package com.farmtopalm.terminal.sync
+ 
+ import android.util.Base64
++import com.farmtopalm.terminal.biometric.dto.IdentifyResult
++import com.farmtopalm.terminal.biometric.dto.MatchStatus
+ import com.farmtopalm.terminal.data.db.entities.AttendanceEventEntity
+ import com.farmtopalm.terminal.data.db.entities.MealEventEntity
+ import com.farmtopalm.terminal.util.Logger
+@@ -102,6 +104,145 @@ class ApiClient(
+         tryPrimaryThenFallback { getSupaschoolStudentsWithUrl(it) }
+     }
+ 
++    /**
++     * Log a palm scan attempt to backend audit table.
++     * source: "local" or "edcc"
++     */
++    suspend fun postPalmScanEvent(
++        matchStatus: MatchStatus,
++        studentId: String?,
++        externalId: String?,
++        confidence: Float?,
++        source: String
++    ): Result<Unit> = withContext(Dispatchers.IO) {
++        val body = JSONObject().apply {
++            put("matchStatus", matchStatus.name)
++            put("studentId", studentId ?: JSONObject.NULL)
++            put("externalId", externalId ?: JSONObject.NULL)
++            put("confidence", confidence?.toDouble() ?: JSONObject.NULL)
++            put("source", source)
++            put("ts", System.currentTimeMillis())
++        }
++        tryPrimaryThenFallback { postWithUrl(it, "/v1/biometrics/palm/scan-event", body.toString()) }
++    }
++
++    // --- EDCC endpoints (raw image support for remote matching) ---
++
++    /**
++     * Health-check for EDCC service using raw images.
++     * Returns 200 if EDCC can process the images; 404 if route not implemented.
++     */
++    suspend fun postEdccHealthCheckImage(
++        rgbImage: ByteArray,
++        irImage: ByteArray,
++        rgbFormat: String?,
++        irFormat: String?
++    ): Result<Unit> = withContext(Dispatchers.IO) {
++        val body = JSONObject().apply {
++            put("rgbImage", Base64.encodeToString(rgbImage, Base64.NO_WRAP))
++            put("irImage", Base64.encodeToString(irImage, Base64.NO_WRAP))
++            put("rgbFormat", rgbFormat ?: JSONObject.NULL)
++            put("irFormat", irFormat ?: JSONObject.NULL)
++        }
++        tryPrimaryThenFallback { postWithUrl(it, "/v1/biometrics/edcc/health-check-image", body.toString()) }
++    }
++
++    /**
++     * Enroll palm with EDCC using raw images when available.
++     * Backend stores EDCC template for remote identify.
++     */
++    suspend fun postEdccPalmEnroll(
++        externalId: String,
++        hand: String,
++        rgb: ByteArray,
++        ir: ByteArray,
++        quality: Int,
++        rgbImage: ByteArray?,
++        irImage: ByteArray?,
++        rgbImageFormat: String?,
++        irImageFormat: String?
++    ): Result<Unit> = withContext(Dispatchers.IO) {
++        val body = JSONObject().apply {
++            put("externalId", externalId)
++            put("hand", hand)
++            put("rgbEnc", Base64.encodeToString(rgb, Base64.NO_WRAP))
++            put("irEnc", Base64.encodeToString(ir, Base64.NO_WRAP))
++            put("quality", quality)
++            if (rgbImage != null) put("rgbImage", Base64.encodeToString(rgbImage, Base64.NO_WRAP))
++            if (irImage != null) put("irImage", Base64.encodeToString(irImage, Base64.NO_WRAP))
++            put("rgbImageFormat", rgbImageFormat ?: JSONObject.NULL)
++            put("irImageFormat", irImageFormat ?: JSONObject.NULL)
++        }
++        tryPrimaryThenFallback { postWithUrl(it, "/v1/biometrics/edcc/enroll", body.toString()) }
++    }
++
++    /**
++     * Identify palm via EDCC using raw images when available.
++     * Returns IdentifyResult with studentId, confidence, matchStatus.
++     */
++    suspend fun postEdccIdentify(
++        rgb: ByteArray,
++        ir: ByteArray,
++        rgbImage: ByteArray?,
++        irImage: ByteArray?,
++        rgbImageFormat: String?,
++        irImageFormat: String?
++    ): Result<IdentifyResult> = withContext(Dispatchers.IO) {
++        tryPrimaryThenFallback { postEdccIdentifyWithUrl(it, rgb, ir, rgbImage, irImage, rgbImageFormat, irImageFormat) }
++    }
++
++    private fun postEdccIdentifyWithUrl(
++        baseUrl: String,
++        rgb: ByteArray,
++        ir: ByteArray,
++        rgbImage: ByteArray?,
++        irImage: ByteArray?,
++        rgbImageFormat: String?,
++        irImageFormat: String?
++    ): Result<IdentifyResult> {
++        val body = JSONObject().apply {
++            put("rgbEnc", Base64.encodeToString(rgb, Base64.NO_WRAP))
++            put("irEnc", Base64.encodeToString(ir, Base64.NO_WRAP))
++            if (rgbImage != null) put("rgbImage", Base64.encodeToString(rgbImage, Base64.NO_WRAP))
++            if (irImage != null) put("irImage", Base64.encodeToString(irImage, Base64.NO_WRAP))
++            put("rgbImageFormat", rgbImageFormat ?: JSONObject.NULL)
++            put("irImageFormat", irImageFormat ?: JSONObject.NULL)
++        }
++        val url = baseUrl + "/v1/biometrics/edcc/identify"
++        val request = Request.Builder()
++            .url(url)
++            .addHeader("Authorization", "Bearer $token")
++            .addHeader("Content-Type", jsonType.toString())
++            .post(body.toString().toRequestBody(jsonType))
++            .build()
++        return try {
++            val response = client.newCall(request).execute()
++            val bodyStr = response.body?.string() ?: ""
++            if (!response.isSuccessful) {
++                Logger.e("EDCC identify API error: ${response.code} $bodyStr")
++                val detail = try {
++                    val json = JSONObject(bodyStr)
++                    json.optString("details", json.optString("error", "")).takeIf { it.isNotBlank() }
++                } catch (_: Exception) { null }
++                return Result.Error(if (detail != null) "HTTP ${response.code}: $detail" else "HTTP ${response.code}")
++            }
++            val json = JSONObject(bodyStr)
++            val studentId = json.optString("studentId", "")
++            val externalId = json.optString("externalId", "")
++            val confidence = json.optDouble("confidence", 0.0).toFloat()
++            val statusStr = json.optString("matchStatus", "NO_MATCH")
++            val matchStatus = when (statusStr.uppercase()) {
++                "VERIFIED" -> MatchStatus.VERIFIED
++                "LOW_CONFIDENCE" -> MatchStatus.LOW_CONFIDENCE
++                else -> MatchStatus.NO_MATCH
++            }
++            Result.Success(IdentifyResult(studentId = studentId.ifBlank { externalId }, confidence = confidence, matchStatus = matchStatus))
++        } catch (e: Exception) {
++            Logger.e("EDCC identify request failed", e)
++            Result.Error(e.message ?: "Network error", e as? Throwable)
++        }
++    }
++
+     private fun isNetworkFailure(error: Result.Error): Boolean {
+         val cause = error.cause
+         if (cause is IOException || cause is UnknownHostException) return true
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/MainActivity.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/MainActivity.kt
+index 7eb1144..30cdb83 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/MainActivity.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/MainActivity.kt
+@@ -16,12 +16,14 @@ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.unit.dp
+ import com.farmtopalm.terminal.BuildConfig
++import kotlin.text.Charsets
+ import com.farmtopalm.terminal.data.crypto.Crypto
+ import com.farmtopalm.terminal.data.db.AppDatabase
+ import com.farmtopalm.terminal.di.AppModule
+ import com.farmtopalm.terminal.nfc.NfcManager
+ import com.farmtopalm.terminal.nfc.NfcParser
+ import com.farmtopalm.terminal.provisioning.ProvisioningManager
++import com.farmtopalm.terminal.biometric.dto.IdentifyResult
+ import com.farmtopalm.terminal.sync.ApiClient
+ import com.farmtopalm.terminal.sync.SyncRunner
+ import com.farmtopalm.terminal.sync.SyncScheduler
+@@ -128,6 +130,7 @@ class MainActivity : ComponentActivity() {
+                             )
+                         }
+                         route == "attendance" -> config.value?.let { c ->
++                            val tokenBytes = remember(c) { try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null } }
+                             AttendanceScreen(
+                                 palmManager = palmManager,
+                                 terminalId = c.terminalId,
+@@ -140,10 +143,30 @@ class MainActivity : ComponentActivity() {
+                                         route = "home"
+                                     }
+                                 },
+-                                onBack = { route = "home" }
++                                onBack = { route = "home" },
++                                remoteIdentify = if (tokenBytes != null) { capture ->
++                                    val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(tokenBytes!!, Charsets.UTF_8))
++                                    val rgb = capture.rgbFeature ?: ByteArray(0)
++                                    val ir = capture.irFeature ?: rgb
++                                    when (val r = client.postEdccIdentify(rgb, ir, capture.rgbImage, capture.irImage, capture.rgbImageFormat, capture.irImageFormat)) {
++                                        is com.farmtopalm.terminal.util.Result.Success -> {
++                                            val extId = r.value.studentId.trim()
++                                            val internalId = studentRepo.getByExternalId(extId)?.id ?: extId
++                                            com.farmtopalm.terminal.util.Result.Success(IdentifyResult(studentId = internalId, confidence = r.value.confidence, matchStatus = r.value.matchStatus))
++                                        }
++                                        is com.farmtopalm.terminal.util.Result.Error -> r
++                                    }
++                                } else null,
++                                onLogPalmScan = if (tokenBytes != null) { matchStatus, studentId, confidence, source ->
++                                    try {
++                                        val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(tokenBytes!!, Charsets.UTF_8))
++                                        client.postPalmScanEvent(matchStatus, studentId, null, confidence, source)
++                                    } catch (_: Exception) { }
++                                } else null
+                             )
+                         } ?: run { route = "home" }
+                         route == "meal" -> config.value?.let { c ->
++                            val mealTokenBytes = remember(c) { try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null } }
+                             MealScreen(
+                                 palmManager = palmManager,
+                                 nfcUid = nfcUid,
+@@ -159,7 +182,26 @@ class MainActivity : ComponentActivity() {
+                                         route = "home"
+                                     }
+                                 },
+-                                onBack = { route = "home" }
++                                onBack = { route = "home" },
++                                remoteIdentify = if (mealTokenBytes != null) { capture ->
++                                    val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(mealTokenBytes!!, Charsets.UTF_8))
++                                    val rgb = capture.rgbFeature ?: ByteArray(0)
++                                    val ir = capture.irFeature ?: rgb
++                                    when (val r = client.postEdccIdentify(rgb, ir, capture.rgbImage, capture.irImage, capture.rgbImageFormat, capture.irImageFormat)) {
++                                        is com.farmtopalm.terminal.util.Result.Success -> {
++                                            val extId = r.value.studentId.trim()
++                                            val internalId = studentRepo.getByExternalId(extId)?.id ?: extId
++                                            com.farmtopalm.terminal.util.Result.Success(IdentifyResult(studentId = internalId, confidence = r.value.confidence, matchStatus = r.value.matchStatus))
++                                        }
++                                        is com.farmtopalm.terminal.util.Result.Error -> r
++                                    }
++                                } else null,
++                                onLogPalmScan = if (mealTokenBytes != null) { matchStatus, studentId, confidence, source ->
++                                    try {
++                                        val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(mealTokenBytes!!, Charsets.UTF_8))
++                                        client.postPalmScanEvent(matchStatus, studentId, null, confidence, source)
++                                    } catch (_: Exception) { }
++                                } else null
+                             )
+                         } ?: run { route = "home" }
+                         route == "enrollment" -> config.value?.let { c ->
+@@ -178,7 +220,7 @@ class MainActivity : ComponentActivity() {
+                                 onSearchChange = { enrollQuery = it },
+                                 preselectedStudentId = enrollmentPreselectedStudentId,
+                                 onRequestPin = { },
+-                                onSaveTemplate = { extId, studentName, hand, rgb, ir, quality, streamType, rgbModelHash, irModelHash, sdkTemplateId, onSaved ->
++                                onSaveTemplate = { extId, studentName, hand, rgb, ir, quality, rgbImage, irImage, rgbImageFormat, irImageFormat, streamType, rgbModelHash, irModelHash, sdkTemplateId, onSaved ->
+                                 scope.launch {
+                                     try {
+                                         studentRepo.upsert(extId, studentName.ifBlank { "Student $extId" }, config.value!!.schoolId)
+@@ -199,7 +241,7 @@ class MainActivity : ComponentActivity() {
+                                         // Sync palm to backend immediately so SupaSchool profile shows status
+                                         val tokenBytes = try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null }
+                                         if (tokenBytes != null) {
+-                                            val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(tokenBytes))
++                                            val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, String(tokenBytes!!, Charsets.UTF_8))
+                                             when (val syncResult = client.postPalmSync(extId, handNorm, rgb, ir, quality)) {
+                                                 is com.farmtopalm.terminal.util.Result.Success -> {
+                                                     db.palmTemplateDao().markSynced(templateId)
+@@ -210,6 +252,13 @@ class MainActivity : ComponentActivity() {
+                                                     SyncScheduler.runNow(ctx)
+                                                 }
+                                             }
++                                            // EDCC enroll with raw images when available (for remote identify)
++                                            if (rgbImage != null && irImage != null) {
++                                                when (val edccResult = client.postEdccPalmEnroll(extId, handNorm, rgb, ir, quality, rgbImage, irImage, rgbImageFormat, irImageFormat)) {
++                                                    is com.farmtopalm.terminal.util.Result.Success -> Logger.d("PalmEnroll: EDCC enroll ok")
++                                                    is com.farmtopalm.terminal.util.Result.Error -> Logger.w("PalmEnroll: EDCC enroll failed: ${edccResult.message}")
++                                                }
++                                            }
+                                         }
+                                     } finally {
+                                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { onSaved() }
+@@ -224,7 +273,7 @@ class MainActivity : ComponentActivity() {
+                                     try {
+                                         val tokenBytes = try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null }
+                                         if (tokenBytes == null) { enrollSyncMessage = "Token error"; return@launch }
+-                                        val token = String(tokenBytes)
++                                        val token = String(tokenBytes!!, Charsets.UTF_8)
+                                         val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, token)
+                                         when (val result = client.getSupaschoolStudents()) {
+                                             is com.farmtopalm.terminal.util.Result.Success -> {
+@@ -361,7 +410,7 @@ class MainActivity : ComponentActivity() {
+                                         try {
+                                             val tokenBytes = try { Crypto.decrypt(ctx, c.tokenEnc) } catch (e: Exception) { null }
+                                             if (tokenBytes == null) { syncStudentsMessage = "Token error"; return@launch }
+-                                            val token = String(tokenBytes)
++                                            val token = String(tokenBytes!!, Charsets.UTF_8)
+                                             val client = ApiClient(c.apiBaseUrl, c.apiBaseUrlFallback, token)
+                                             when (val result = client.getSupaschoolStudents()) {
+                                                 is com.farmtopalm.terminal.util.Result.Success -> {
+@@ -399,7 +448,12 @@ class MainActivity : ComponentActivity() {
+                                 onBack = { route = "home" }
+                             )
+                         } ?: run { route = "home" }
+-                        route == "device" -> DeviceStatusScreen(palmStatus = palmManager.status(), onBack = { route = "home" })
++                        route == "device" -> DeviceStatusScreen(
++                                palmStatus = palmManager.status(),
++                                onBack = { route = "home" },
++                                config = config.value,
++                                palmManager = palmManager
++                            )
+                         route == "settings" -> {
+                             var editableApiUrl by remember { mutableStateOf(config.value?.apiBaseUrl ?: "") }
+                             var editableApiUrlFallback by remember { mutableStateOf(config.value?.apiBaseUrlFallback ?: "") }
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/AttendanceScreen.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/AttendanceScreen.kt
+index fa0c857..db95eae 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/AttendanceScreen.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/AttendanceScreen.kt
+@@ -8,6 +8,8 @@ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.unit.dp
+ import com.farmtopalm.terminal.biometric.PalmBiometricManager
++import com.farmtopalm.terminal.biometric.dto.CaptureResult
++import com.farmtopalm.terminal.biometric.dto.IdentifyResult
+ import com.farmtopalm.terminal.biometric.dto.MatchStatus
+ import com.farmtopalm.terminal.util.Logger
+ import com.farmtopalm.terminal.util.Result
+@@ -18,7 +20,9 @@ import kotlinx.coroutines.withContext
+ /** UI state for attendance palm scan. "No match" only after a real scan attempt. */
+ private sealed class AttendanceScanState {
+     data object Idle : AttendanceScanState()
+-    data object Scanning : AttendanceScanState()
++    data class Scanning(val message: String = "Place your palm on the reader") : AttendanceScanState()
++    /** First scan matched; waiting for second scan to confirm (two-scan consensus). */
++    data class AwaitingConfirmation(val candidateStudentId: String) : AttendanceScanState()
+     data class Matched(val studentId: String, val confidence: Float) : AttendanceScanState()
+     data object NoMatch : AttendanceScanState()
+     data class Error(val message: String) : AttendanceScanState()
+@@ -30,11 +34,16 @@ fun AttendanceScreen(
+     terminalId: String,
+     schoolId: String,
+     onRecordAttendance: (studentId: String, confidence: Float) -> Unit,
+-    onBack: () -> Unit
++    onBack: () -> Unit,
++    remoteIdentify: (suspend (CaptureResult) -> Result<IdentifyResult>)? = null,
++    onLogPalmScan: (suspend (matchStatus: MatchStatus, studentId: String?, confidence: Float?, source: String) -> Unit)? = null
+ ) {
+     var scanState by remember { mutableStateOf<AttendanceScanState>(AttendanceScanState.Idle) }
+     var openReady by remember { mutableStateOf(false) }
+     var openError by remember { mutableStateOf<String?>(null) }
++    var pendingCandidate by remember { mutableStateOf<String?>(null) }
++    var pendingConfidence by remember { mutableStateOf<Float?>(null) }
++    var pendingSeenAt by remember { mutableStateOf<Long?>(null) }
+     val scope = rememberCoroutineScope()
+ 
+     // Open once when screen is entered; reuse same device when re-entering (do not release on leave).
+@@ -51,13 +60,39 @@ fun AttendanceScreen(
+     fun startScan() {
+         if (scanState is AttendanceScanState.Scanning || !openReady || openError != null) return
+         Logger.d("Attendance: scan started")
+-        scanState = AttendanceScanState.Scanning
++        scanState = AttendanceScanState.Scanning()
+         palmManager.captureForIdentify(scope) { capResult ->
+             when (capResult) {
+                 is Result.Success -> {
+-                    // Run identify on IO thread to avoid blocking Main (was causing ANR / "app keeps stopping")
++                    val capture = capResult.value
+                     scope.launch(Dispatchers.IO) {
+-                        val id = palmManager.identify(capResult.value)
++                        val id = if (remoteIdentify != null && (capture.rgbImage != null || capture.irImage != null)) {
++                            Logger.d("Attendance: attempting EDCC remote identify")
++                            when (val remote = remoteIdentify.invoke(capture)) {
++                                is Result.Success -> remote
++                                is Result.Error -> {
++                                    Logger.w("Attendance: EDCC remote identify failed: ${remote.message}")
++                                    remote
++                                }
++                            }
++                        } else if (remoteIdentify != null) {
++                            Logger.w("Attendance: raw images missing; attendance identify refused to avoid false positives")
++                            Result.Error("No raw palm images available for high-certainty identify", null)
++                        } else {
++                            palmManager.identify(capture)
++                        }
++                        // Best-effort audit log (do not block UI)
++                        try {
++                            when (id) {
++                                is Result.Success -> onLogPalmScan?.invoke(
++                                    id.value.matchStatus,
++                                    id.value.studentId.takeIf { it.isNotBlank() },
++                                    id.value.confidence,
++                                    if (remoteIdentify != null) "edcc" else "local"
++                                )
++                                is Result.Error -> onLogPalmScan?.invoke(MatchStatus.NO_MATCH, null, null, "local")
++                            }
++                        } catch (_: Exception) { }
+                         val result = when (id) {
+                             is Result.Success -> when (id.value.matchStatus) {
+                                 MatchStatus.VERIFIED -> AttendanceScanState.Matched(id.value.studentId, id.value.confidence)
+@@ -69,7 +104,33 @@ fun AttendanceScreen(
+                             scanState = result
+                             Logger.d("Attendance: scan result=$result")
+                             if (result is AttendanceScanState.Matched) {
+-                                onRecordAttendance(result.studentId, result.confidence)
++                                val now = System.currentTimeMillis()
++                                val sameStudent =
++                                    pendingCandidate == result.studentId &&
++                                    pendingSeenAt != null &&
++                                    (now - pendingSeenAt!!) <= 4000L
++                                val differentStudent =
++                                    pendingCandidate != null &&
++                                    pendingCandidate != result.studentId
++                                if (sameStudent) {
++                                    Logger.d("Attendance: two-scan consensus achieved for student=${result.studentId}")
++                                    pendingCandidate = null
++                                    pendingConfidence = null
++                                    pendingSeenAt = null
++                                    onRecordAttendance(result.studentId, result.confidence)
++                                } else if (differentStudent) {
++                                    Logger.d("Attendance: scans disagreed (${pendingCandidate} vs ${result.studentId}); refusing to mark")
++                                    pendingCandidate = null
++                                    pendingConfidence = null
++                                    pendingSeenAt = null
++                                    scanState = AttendanceScanState.NoMatch
++                                } else {
++                                    Logger.d("Attendance: first confident match seen for student=${result.studentId}, waiting for confirmation scan")
++                                    pendingCandidate = result.studentId
++                                    pendingConfidence = result.confidence
++                                    pendingSeenAt = now
++                                    scanState = AttendanceScanState.AwaitingConfirmation(result.studentId)
++                                }
+                             }
+                         }
+                     }
+@@ -133,7 +194,11 @@ fun AttendanceScreen(
+                         CircularProgressIndicator(Modifier.size(56.dp), color = MaterialTheme.colorScheme.primary)
+                         Spacer(Modifier.height(8.dp))
+                         Text("Scanning…", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+-                        Text("Place your palm on the reader", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        Text(state.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                    }
++                    is AttendanceScanState.AwaitingConfirmation -> {
++                        Text("Scan same palm again to confirm", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
++                        Text("First scan matched; second scan required for certainty", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                     }
+                     is AttendanceScanState.Matched -> {
+                         Text("Welcome, ${state.studentId}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+@@ -167,6 +232,7 @@ fun AttendanceScreen(
+             Text(
+                 when (scanState) {
+                     is AttendanceScanState.Scanning -> "Scanning…"
++                    is AttendanceScanState.AwaitingConfirmation -> "Scan again to confirm"
+                     else -> "Scan Palm"
+                 }
+             )
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/DeviceStatusScreen.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/DeviceStatusScreen.kt
+index d72636b..32eb8f8 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/DeviceStatusScreen.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/DeviceStatusScreen.kt
+@@ -6,18 +6,34 @@ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.*
+ import androidx.compose.runtime.*
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.unit.dp
++import com.farmtopalm.terminal.biometric.PalmBiometricManager
+ import com.farmtopalm.terminal.biometric.PalmSdkBridge
+ import com.farmtopalm.terminal.biometric.dto.PalmDeviceStatus
++import com.farmtopalm.terminal.data.db.entities.TerminalConfigEntity
++import com.farmtopalm.terminal.data.crypto.Crypto
++import com.farmtopalm.terminal.sync.ApiClient
++import com.farmtopalm.terminal.util.Result
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.suspendCancellableCoroutine
++import kotlinx.coroutines.withContext
++import kotlin.coroutines.resume
++import kotlin.text.Charsets
+ 
+ @Composable
+ fun DeviceStatusScreen(
+     palmStatus: PalmDeviceStatus?,
+-    onBack: () -> Unit
++    onBack: () -> Unit,
++    config: TerminalConfigEntity? = null,
++    palmManager: PalmBiometricManager? = null
+ ) {
+     val status = palmStatus ?: PalmDeviceStatus(initialized = false, deviceConnected = false, open = false, lastError = "SDK not wired")
+     var selfTestRunning by remember { mutableStateOf(false) }
+     var selfTestResult by remember { mutableStateOf<String?>(null) }
++    var edccCheckRunning by remember { mutableStateOf(false) }
++    var edccCheckResult by remember { mutableStateOf<String?>(null) }
+     val scope = rememberCoroutineScope()
+ 
+     Column(Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
+@@ -52,6 +68,50 @@ fun DeviceStatusScreen(
+         }
+         selfTestResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
+ 
++        if (config != null && palmManager != null) {
++            val ctx = LocalContext.current
++            val tokenBytes = remember(config) { try { Crypto.decrypt(ctx, config.tokenEnc) } catch (e: Exception) { null } }
++            if (tokenBytes != null) {
++                Spacer(Modifier.height(16.dp))
++                Text("EDCC Remote", style = MaterialTheme.typography.titleSmall)
++                Text("Check if backend EDCC service accepts raw images.", style = MaterialTheme.typography.bodySmall)
++                Spacer(Modifier.height(8.dp))
++                Button(
++                    onClick = {
++                        edccCheckRunning = true
++                        edccCheckResult = null
++                        scope.launch {
++                            val capResult = suspendCancellableCoroutine<Result<com.farmtopalm.terminal.biometric.dto.CaptureResult>> { cont ->
++                                palmManager.captureForIdentify(scope) { cont.resume(it) }
++                            }
++                            val msg = when (capResult) {
++                                is Result.Success -> {
++                                    val c = capResult.value
++                                    if (c.rgbImage != null && c.irImage != null) {
++                                        val client = ApiClient(config.apiBaseUrl, config.apiBaseUrlFallback, String(tokenBytes!!, Charsets.UTF_8))
++                                        withContext(Dispatchers.IO) {
++                                            when (val r = client.postEdccHealthCheckImage(c.rgbImage!!, c.irImage!!, c.rgbImageFormat, c.irImageFormat)) {
++                                                is Result.Success -> "EDCC health-check: OK"
++                                                is Result.Error -> "EDCC health-check: ${r.message}"
++                                            }
++                                        }
++                                    } else "Raw images not available from SDK"
++                                }
++                                is Result.Error -> "Capture failed: ${capResult.message}"
++                            }
++                            edccCheckResult = msg
++                            edccCheckRunning = false
++                        }
++                    },
++                    enabled = !edccCheckRunning,
++                    modifier = Modifier.heightIn(min = 48.dp)
++                ) {
++                    Text(if (edccCheckRunning) "Checking…" else "Check EDCC Health")
++                }
++                edccCheckResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
++            }
++        }
++
+         Spacer(Modifier.height(16.dp))
+         TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 68.dp)) { Text("Back") }
+     }
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/EnrollmentScreen.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/EnrollmentScreen.kt
+index 9e164a0..bf604f4 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/EnrollmentScreen.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/EnrollmentScreen.kt
+@@ -33,7 +33,7 @@ fun EnrollmentScreen(
+     onSearchChange: (String) -> Unit,
+     preselectedStudentId: String? = null,
+     onRequestPin: (onVerified: () -> Unit) -> Unit,
+-    onSaveTemplate: (externalId: String, name: String, hand: String, rgb: ByteArray, ir: ByteArray, quality: Int, streamType: String?, rgbModelHash: String?, irModelHash: String?, sdkTemplateId: String?, onSaved: () -> Unit) -> Unit,
++    onSaveTemplate: (externalId: String, name: String, hand: String, rgb: ByteArray, ir: ByteArray, quality: Int, rgbImage: ByteArray?, irImage: ByteArray?, rgbImageFormat: String?, irImageFormat: String?, streamType: String?, rgbModelHash: String?, irModelHash: String?, sdkTemplateId: String?, onSaved: () -> Unit) -> Unit,
+     onBack: () -> Unit,
+     onSyncStudents: () -> Unit = {},
+     syncStudentsMessage: String? = null,
+@@ -260,8 +260,17 @@ fun EnrollmentScreen(
+                                 val ir = v.irFeature ?: rgb
+                                 val q = v.quality
+                                 val capture = GuidedCapture(
+-                                    rgb, ir, q,
+-                                    v.streamType, v.rgbModelHash, v.irModelHash, v.matchTemplateId
++                                    rgb = rgb,
++                                    ir = ir,
++                                    quality = q,
++                                    rgbImage = v.rgbImage,
++                                    irImage = v.irImage,
++                                    rgbImageFormat = v.rgbImageFormat,
++                                    irImageFormat = v.irImageFormat,
++                                    streamType = v.streamType,
++                                    rgbModelHash = v.rgbModelHash,
++                                    irModelHash = v.irModelHash,
++                                    sdkTemplateId = v.matchTemplateId
+                                 )
+                                 if (q >= GUIDED_ENROLL_MIN_QUALITY) {
+                                     if (best == null || q > best!!.quality) best = capture
+@@ -305,6 +314,10 @@ fun EnrollmentScreen(
+                                 finalBest.rgb,
+                                 finalBest.ir,
+                                 finalBest.quality,
++                                finalBest.rgbImage,
++                                finalBest.irImage,
++                                finalBest.rgbImageFormat,
++                                finalBest.irImageFormat,
+                                 finalBest.streamType,
+                                 finalBest.rgbModelHash,
+                                 finalBest.irModelHash,
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/GuidedEnrollmentFlow.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/GuidedEnrollmentFlow.kt
+index 6532cd7..9d48e74 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/GuidedEnrollmentFlow.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/GuidedEnrollmentFlow.kt
+@@ -33,14 +33,29 @@ data class GuidedCapture(
+     val rgb: ByteArray,
+     val ir: ByteArray,
+     val quality: Int,
++    val rgbImage: ByteArray? = null,
++    val irImage: ByteArray? = null,
++    val rgbImageFormat: String? = null,
++    val irImageFormat: String? = null,
+     val streamType: String?,
+     val rgbModelHash: String?,
+     val irModelHash: String?,
+     val sdkTemplateId: String?
+ ) {
+-    override fun equals(other: Any?): Boolean = this === other || (other is GuidedCapture &&
+-            rgb.contentEquals(other.rgb) && ir.contentEquals(other.ir) && quality == other.quality)
+-    override fun hashCode(): Int = rgb.hashCode() xor ir.hashCode() xor quality
++    override fun equals(other: Any?): Boolean =
++        this === other || (other is GuidedCapture &&
++            rgb.contentEquals(other.rgb) &&
++            ir.contentEquals(other.ir) &&
++            quality == other.quality &&
++            ((rgbImage == null && other.rgbImage == null) || (rgbImage != null && other.rgbImage != null && rgbImage.contentEquals(other.rgbImage))) &&
++            ((irImage == null && other.irImage == null) || (irImage != null && other.irImage != null && irImage.contentEquals(other.irImage))))
++
++    override fun hashCode(): Int =
++        rgb.contentHashCode() xor
++            ir.contentHashCode() xor
++            quality xor
++            (rgbImage?.contentHashCode() ?: 0) xor
++            (irImage?.contentHashCode() ?: 0)
+ }
+ 
+ /**
+diff --git a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/MealScreen.kt b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/MealScreen.kt
+index eb542e6..198da92 100644
+--- a/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/MealScreen.kt
++++ b/Android/farm-to-palm/terminal-android/app/src/main/java/com/farmtopalm/terminal/ui/screens/MealScreen.kt
+@@ -8,6 +8,8 @@ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.unit.dp
+ import com.farmtopalm.terminal.biometric.PalmBiometricManager
++import com.farmtopalm.terminal.biometric.dto.CaptureResult
++import com.farmtopalm.terminal.biometric.dto.IdentifyResult
+ import com.farmtopalm.terminal.biometric.dto.MatchStatus
+ import com.farmtopalm.terminal.util.Logger
+ import com.farmtopalm.terminal.util.Result
+@@ -33,7 +35,9 @@ fun MealScreen(
+     terminalId: String,
+     schoolId: String,
+     onRecordMeal: (studentId: String, method: String) -> Unit,
+-    onBack: () -> Unit
++    onBack: () -> Unit,
++    remoteIdentify: (suspend (CaptureResult) -> Result<IdentifyResult>)? = null,
++    onLogPalmScan: (suspend (matchStatus: MatchStatus, studentId: String?, confidence: Float?, source: String) -> Unit)? = null
+ ) {
+     var status by remember { mutableStateOf("Tap NFC or scan palm") }
+     var palmState by remember { mutableStateOf<MealPalmScanState>(MealPalmScanState.Idle) }
+@@ -70,8 +74,29 @@ fun MealScreen(
+         palmManager.captureForIdentify(scope) { capResult ->
+             when (capResult) {
+                 is Result.Success -> {
++                    val capture = capResult.value
+                     scope.launch(Dispatchers.IO) {
+-                        val id = palmManager.identify(capResult.value)
++                        var id = palmManager.identify(capture)
++                        var usedRemote = false
++                        if (id is Result.Error || (id is Result.Success && id.value.matchStatus != MatchStatus.VERIFIED)) {
++                            val remote = remoteIdentify?.invoke(capture)
++                            if (remote is Result.Success && remote.value.matchStatus == MatchStatus.VERIFIED) {
++                                id = remote
++                                usedRemote = true
++                            }
++                        }
++                        // Best-effort audit log (do not block UI)
++                        try {
++                            when (id) {
++                                is Result.Success -> onLogPalmScan?.invoke(
++                                    id.value.matchStatus,
++                                    id.value.studentId.takeIf { it.isNotBlank() },
++                                    id.value.confidence,
++                                    if (usedRemote) "edcc" else "local"
++                                )
++                                is Result.Error -> onLogPalmScan?.invoke(MatchStatus.NO_MATCH, null, null, "local")
++                            }
++                        } catch (_: Exception) { }
+                         val result = when (id) {
+                             is Result.Success -> when (id.value.matchStatus) {
+                                 MatchStatus.VERIFIED -> MealPalmScanState.Matched(id.value.studentId, id.value.confidence)
+diff --git a/Android/farm-to-palm/terminal-android/build.gradle b/Android/farm-to-palm/terminal-android/build.gradle
+index 4a2eeef..a0bfc10 100644
+--- a/Android/farm-to-palm/terminal-android/build.gradle
++++ b/Android/farm-to-palm/terminal-android/build.gradle
+@@ -8,6 +8,7 @@ buildscript {
+     dependencies {
+         classpath 'com.android.tools.build:gradle:8.2.2'
+         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
++        classpath 'com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin:1.9.22-1.0.17'
+     }
+ }
+ allprojects {
+diff --git a/Android/gradle.properties b/Android/gradle.properties
+index 20e2a01..dc98a4f 100644
+--- a/Android/gradle.properties
++++ b/Android/gradle.properties
+@@ -1,4 +1,6 @@
+ # Project-wide Gradle settings.
++# Use Android Studio bundled JDK (override if your JDK is elsewhere)
++org.gradle.java.home=/Applications/Android Studio.app/Contents/jbr/Contents/Home
+ # IDE (e.g. Android Studio) users:
+ # Gradle settings configured through the IDE *will override*
+ # any settings specified in this file.
+diff --git a/Android/gradlew b/Android/gradlew
+old mode 100644
+new mode 100755
