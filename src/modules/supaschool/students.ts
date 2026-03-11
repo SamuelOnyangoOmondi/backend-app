@@ -1,14 +1,46 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getSupabase } from '../../supabase/client.js';
-import { terminalAuth } from '../../shared/middleware/auth.js';
 import { env } from '../../env.js';
 
+/** Request with terminal auth (schoolId set by terminalAuth middleware). */
+type AuthenticatedRequest = FastifyRequest & { schoolId?: string };
+
 /**
- * GET /v1/supaschool/students
+ * Handler for GET /v1/supaschool/students.
  * Returns students from Supa School (Supabase) for the terminal's school.
- * Used by the device to sync students so externalId = Supabase student id (for attendance/meal records).
- * Requires Supabase to be configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).
+ * Used by the device to sync students so externalId = Supabase student id.
  */
+export async function handleGetStudents(req: AuthenticatedRequest, reply: FastifyReply) {
+  const sb = getSupabase();
+  if (!sb) {
+    return reply.status(503).send({
+      error: 'Supa School bridge not configured',
+      hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Railway Variables',
+    });
+  }
+  const schoolId = env.SUPABASE_SCHOOL_ID || req.schoolId;
+  const { data, error } = await sb
+    .from('students')
+    .select('id, first_name, last_name, admission_number')
+    .eq('school_id', schoolId)
+    .order('last_name', { ascending: true });
+  if (error) {
+    req.log?.error({ err: error, schoolId }, 'Supabase students query failed');
+    return reply.status(502).send({
+      error: 'Failed to fetch students',
+      details: error.message,
+      hint: 'Check SUPABASE_SERVICE_ROLE_KEY and terminal schoolId in Supabase schools.',
+    });
+  }
+  const studentsList = (data ?? []).map((row: { id: string; first_name: string; last_name: string; admission_number: string }) => ({
+    id: row.id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    admissionNumber: row.admission_number ?? '',
+  }));
+  return reply.send({ students: studentsList });
+}
+
 export default async function (app: FastifyInstance) {
   /** Test Supabase write: try inserting attendance + meal for a student. No auth. GET /v1/supaschool/test-write?student_id=UUID&school_id=UUID */
   app.get('/v1/supaschool/test-write', async (req: FastifyRequest, reply: FastifyReply) => {

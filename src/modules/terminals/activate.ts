@@ -5,9 +5,21 @@ import { signToken } from '../../shared/crypto/jwt.js';
 import { env } from '../../env.js';
 import crypto from 'crypto';
 
-function getApiBaseUrlForDevice(): string {
+function deriveBaseUrlFromRequest(req: FastifyRequest): string | null {
+  const xfHost = req.headers['x-forwarded-host'];
+  const host = (Array.isArray(xfHost) ? xfHost[0] : xfHost) || req.headers.host;
+  if (!host) return null;
+  const xfProto = req.headers['x-forwarded-proto'];
+  const protoRaw = (Array.isArray(xfProto) ? xfProto[0] : xfProto) as string | undefined;
+  const proto = (protoRaw || 'https').split(',')[0].trim();
+  return `${proto}://${host}`.replace(/\/$/, '');
+}
+
+function getApiBaseUrlForDevice(req: FastifyRequest): string {
   const url = (env.BACKEND_PUBLIC_URL || process.env.API_BASE_URL || '').trim();
   if (url) return url.replace(/\/$/, '');
+  const derived = deriveBaseUrlFromRequest(req);
+  if (derived) return derived;
   return `http://localhost:${env.PORT}`;
 }
 
@@ -40,7 +52,7 @@ export default async function (app: FastifyInstance) {
     return reply.send({
       terminalId: row.id,
       schoolId: row.school_id,
-      apiBaseUrl: getApiBaseUrlForDevice(),
+      apiBaseUrl: getApiBaseUrlForDevice(req),
       token,
     });
   });

@@ -8,6 +8,9 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:supaschool": "vitest run --run src/modules/supaschool/students.test.ts",
+    "test:sync-students": "node scripts/test-sync-students.mjs",
+    "test:sync-students:live": "node scripts/test-sync-students-live.mjs",
     "migrate": "knex migrate:latest --knexfile knexfile.cjs",
     "migrate:rollback": "knex migrate:rollback --knexfile knexfile.cjs",
     "seed": "tsx src/seed.ts"

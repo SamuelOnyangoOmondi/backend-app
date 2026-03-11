@@ -19,11 +19,15 @@ import terminalsReport from './modules/reports/terminals.js';
 import eventsCsv from './modules/exports/events.js';
 import login from './modules/auth/login.js';
 import supaschoolStudents from './modules/supaschool/students.js';
-import { getSupabase } from './supabase/client.js';
+import { handleGetStudents } from './modules/supaschool/students.js';
 import { terminalAuth } from './shared/middleware/auth.js';
 
 async function main() {
   const app = Fastify({ logger: true });
+  const routesList: { method: string; url: string }[] = [];
+  app.addHook('onRoute', (routeOptions) => {
+    routesList.push({ method: routeOptions.method as string, url: routeOptions.url });
+  });
   await app.register(cors, { origin: true });
   await app.register(activate);
   await app.register(heartbeat);
@@ -45,40 +49,23 @@ async function main() {
   app.get('/v1/supaschool/ping', async (_req, reply) => {
     return reply.send({ ok: true, message: 'Supa School routes active' });
   });
-  app.get('/v1/supaschool/students', { preHandler: terminalAuth }, async (req: any, reply) => {
-    const sb = getSupabase();
-    if (!sb) {
-      return reply.status(503).send({
-        error: 'Supa School bridge not configured',
-        hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Railway Variables',
-      });
-    }
-    const schoolId = env.SUPABASE_SCHOOL_ID || req.schoolId;
-    const { data, error } = await sb
-      .from('students')
-      .select('id, first_name, last_name, admission_number')
-      .eq('school_id', schoolId)
-      .order('last_name', { ascending: true });
-    if (error) {
-      req.log?.error({ err: error, schoolId }, 'Supabase students query failed');
-      return reply.status(502).send({
-        error: 'Failed to fetch students',
-        details: error.message,
-        hint: 'Check SUPABASE_SERVICE_ROLE_KEY and terminal schoolId in Supabase schools.',
-      });
-    }
-    const studentsList = (data ?? []).map((row: { id: string; first_name: string; last_name: string; admission_number: string }) => ({
-      id: row.id,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      admissionNumber: row.admission_number ?? '',
-    }));
-    return reply.send({ students: studentsList });
-  });
+  app.get('/v1/supaschool/students', { preHandler: terminalAuth }, handleGetStudents);
 
   app.get('/health', async () => ({ ok: true }));
   app.get('/', async () => ({ ok: true, message: 'FarmToPalm API. Use /health or /v1/...' }));
+  // Debug: list all registered routes (proves what is deployed)
+  app.get('/routes', async (_req, reply) => {
+    const supaschool = routesList.filter((r) => r.url.includes('supaschool'));
+    return reply.send({
+      total: routesList.length,
+      supaschoolRoutes: supaschool,
+      allRoutes: routesList,
+    });
+  });
+
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
   console.log(`Backend listening on http://0.0.0.0:${env.PORT} (reachable on your LAN IP, e.g. http://192.168.1.128:3000)`);
+  const hasStudents = routesList.some((r) => r.url === '/v1/supaschool/students' && r.method === 'GET');
+  console.log(`GET /v1/supaschool/students registered: ${hasStudents}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
