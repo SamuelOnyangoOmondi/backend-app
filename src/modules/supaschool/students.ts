@@ -79,38 +79,5 @@ export default async function (app: FastifyInstance) {
     }
   });
 
-  app.get('/v1/supaschool/students', { preHandler: terminalAuth }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const sb = getSupabase();
-    if (!sb) {
-      return reply.status(503).send({
-        error: 'Supa School bridge not configured',
-        hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to the Supa School project in backend .env',
-      });
-    }
-    // Use SUPABASE_SCHOOL_ID if set (fixes Neon school_id ≠ Supabase school_id mismatch)
-    const schoolId = env.SUPABASE_SCHOOL_ID || ((req as any).schoolId as string);
-    const { data, error } = await sb
-      .from('students')
-      .select('id, first_name, last_name, admission_number')
-      .eq('school_id', schoolId)
-      .order('last_name', { ascending: true });
-
-    if (error) {
-      req.log?.error({ err: error, schoolId }, 'Supabase students query failed');
-      return reply.status(502).send({
-        error: 'Failed to fetch students',
-        details: error.message,
-        hint: 'Check SUPABASE_SERVICE_ROLE_KEY (use service_role, not anon). Ensure terminal schoolId exists in Supabase schools.',
-      });
-    }
-
-    const students = (data ?? []).map((row: { id: string; first_name: string; last_name: string; admission_number: string }) => ({
-      id: row.id,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      admissionNumber: row.admission_number ?? '',
-    }));
-
-    return reply.send({ students });
-  });
+  // GET /v1/supaschool/students is registered in src/index.ts so it always exists (avoids 404 on Railway).
 }

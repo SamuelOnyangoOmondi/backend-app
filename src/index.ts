@@ -19,6 +19,8 @@ import terminalsReport from './modules/reports/terminals.js';
 import eventsCsv from './modules/exports/events.js';
 import login from './modules/auth/login.js';
 import supaschoolStudents from './modules/supaschool/students.js';
+import { getSupabase } from './supabase/client.js';
+import { terminalAuth } from './shared/middleware/auth.js';
 
 async function main() {
   const app = Fastify({ logger: true });
@@ -38,6 +40,42 @@ async function main() {
   await app.register(eventsCsv);
   await app.register(login);
   await app.register(supaschoolStudents);
+
+  // Guarantee sync-students route exists (avoids 404 if plugin load order or build differs on Railway)
+  app.get('/v1/supaschool/ping', async (_req, reply) => {
+    return reply.send({ ok: true, message: 'Supa School routes active' });
+  });
+  app.get('/v1/supaschool/students', { preHandler: terminalAuth }, async (req: any, reply) => {
+    const sb = getSupabase();
+    if (!sb) {
+      return reply.status(503).send({
+        error: 'Supa School bridge not configured',
+        hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Railway Variables',
+      });
+    }
+    const schoolId = env.SUPABASE_SCHOOL_ID || req.schoolId;
+    const { data, error } = await sb
+      .from('students')
+      .select('id, first_name, last_name, admission_number')
+      .eq('school_id', schoolId)
+      .order('last_name', { ascending: true });
+    if (error) {
+      req.log?.error({ err: error, schoolId }, 'Supabase students query failed');
+      return reply.status(502).send({
+        error: 'Failed to fetch students',
+        details: error.message,
+        hint: 'Check SUPABASE_SERVICE_ROLE_KEY and terminal schoolId in Supabase schools.',
+      });
+    }
+    const studentsList = (data ?? []).map((row: { id: string; first_name: string; last_name: string; admission_number: string }) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      admissionNumber: row.admission_number ?? '',
+    }));
+    return reply.send({ students: studentsList });
+  });
+
   app.get('/health', async () => ({ ok: true }));
   app.get('/', async () => ({ ok: true, message: 'FarmToPalm API. Use /health or /v1/...' }));
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
